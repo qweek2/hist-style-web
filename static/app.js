@@ -28,6 +28,7 @@ const titleInput = document.querySelector("#titleInput");
 const xLabelInput = document.querySelector("#xLabelInput");
 const yLabelInput = document.querySelector("#yLabelInput");
 const compareLabelsInput = document.querySelector("#compareLabelsInput");
+const legendEditor = document.querySelector("#legendEditor");
 const titleFontSizeInput = document.querySelector("#titleFontSizeInput");
 const labelFontSizeInput = document.querySelector("#labelFontSizeInput");
 const tickFontSizeInput = document.querySelector("#tickFontSizeInput");
@@ -40,6 +41,13 @@ const zMaxInput = document.querySelector("#zMaxInput");
 const showSummaryInput = document.querySelector("#showSummaryInput");
 const includeSummaryInput = document.querySelector("#includeSummaryInput");
 const panelColumnsInput = document.querySelector("#panelColumnsInput");
+const panelSharedXInput = document.querySelector("#panelSharedXInput");
+const panelSharedYInput = document.querySelector("#panelSharedYInput");
+const panelEqualRangesInput = document.querySelector("#panelEqualRangesInput");
+const panelTitlesInput = document.querySelector("#panelTitlesInput");
+const panelSpacingInput = document.querySelector("#panelSpacingInput");
+const panelGlobalTitleInput = document.querySelector("#panelGlobalTitleInput");
+const objectInfo = document.querySelector("#objectInfo");
 const scaleControls = document.querySelectorAll(".segmented[data-scale]");
 
 let currentFileId = null;
@@ -50,6 +58,7 @@ let comparePaths = new Set();
 let compareMode = false;
 let panelMode = false;
 let compareObjectUrl = null;
+const legendSettings = new Map();
 
 const globalSettings = {
   stylePreset: "journal",
@@ -184,7 +193,7 @@ fileInput.addEventListener("change", () => {
   if (fileInput.files.length) uploadFile(fileInput.files[0]);
 });
 
-[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, titleInput, xLabelInput, yLabelInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput].forEach((input) => {
+[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, titleInput, xLabelInput, yLabelInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
   input.addEventListener("input", () => {
     saveSettingsFromForm();
     refreshPlotSoon();
@@ -282,6 +291,7 @@ async function uploadFile(file) {
   currentHist = null;
   allHistograms = data.histograms;
   comparePaths.clear();
+  legendSettings.clear();
   compareMode = false;
   panelMode = false;
   histSettings.clear();
@@ -289,6 +299,7 @@ async function uploadFile(file) {
   customInput.disabled = true;
   exportAllButton.disabled = false;
   loadSettingsToForm();
+  objectInfo.textContent = "Select an object";
   statusBox.textContent = `${data.histograms.length} histograms found`;
   renderHistogramList(filteredHistograms());
 }
@@ -313,6 +324,7 @@ function renderHistogramList(histograms) {
     histList.appendChild(button);
   }
   updateCompareButton();
+  renderLegendEditor();
 }
 
 function selectHistogram(hist, button) {
@@ -330,6 +342,7 @@ function selectHistogram(hist, button) {
 
   selectedName.textContent = hist.path;
   downloadLink.classList.remove("disabled");
+  refreshObjectInfo(hist.path);
   refreshPlot();
 }
 
@@ -348,6 +361,7 @@ function toggleCompare(path, checked) {
     comparePaths.delete(path);
   }
   updateCompareButton();
+  renderLegendEditor();
 }
 
 function updateCompareButton() {
@@ -420,11 +434,41 @@ async function refreshSummary() {
 
   const response = await fetch(`/api/files/${currentFileId}/summary?${params.toString()}`);
   if (!response.ok) {
-    summaryLine.textContent = await errorMessage(response);
+    summaryLine.textContent = `Failed to summarize ${currentHist.path}: ${await errorMessage(response)}`;
     return;
   }
 
   summaryLine.textContent = formatSummary(await response.json());
+}
+
+async function refreshObjectInfo(path) {
+  objectInfo.textContent = "Loading...";
+  const params = new URLSearchParams();
+  params.set("path", path);
+  const response = await fetch(`/api/files/${currentFileId}/info?${params.toString()}`);
+  if (!response.ok) {
+    objectInfo.textContent = `Failed to load info for ${path}: ${await errorMessage(response)}`;
+    return;
+  }
+  objectInfo.innerHTML = formatObjectInfo(await response.json());
+}
+
+function formatObjectInfo(info) {
+  const rows = [
+    ["Path", info.path],
+    ["Class", info.className],
+    ["Kind", info.kind],
+    ["Title", info.title || "-"],
+  ];
+  if (info.entries !== undefined) rows.push(["Entries", formatNumber(info.entries)]);
+  if (info.points !== undefined) rows.push(["Points", formatNumber(info.points)]);
+  if (info.binsX !== undefined) rows.push(["Bins X", info.binsX]);
+  if (info.binsY !== undefined) rows.push(["Bins Y", info.binsY]);
+  if (info.xMin !== undefined) rows.push(["X range", `${formatNumber(info.xMin)} .. ${formatNumber(info.xMax)}`]);
+  if (info.yMin !== undefined) rows.push(["Y range", `${formatNumber(info.yMin)} .. ${formatNumber(info.yMax)}`]);
+  if (info.xTitle) rows.push(["X title", info.xTitle]);
+  if (info.yTitle) rows.push(["Y title", info.yTitle]);
+  return rows.map(([key, value]) => `<div><strong>${escapeHtml(key)}</strong><span>${escapeHtml(value)}</span></div>`).join("");
 }
 
 function formatSummary(summary) {
@@ -592,7 +636,7 @@ async function compareSelected() {
   saveSettingsFromForm();
   compareMode = true;
   panelMode = false;
-  selectedName.textContent = "Compare selected TH1";
+  selectedName.textContent = "Compare selected TH1/TProfile";
   const imageFormat = formatInput.value;
   try {
     const blob = await fetchCompareImage("png", paths);
@@ -601,7 +645,7 @@ async function compareSelected() {
     setDownloadBlob(downloadBlob, `compare.${imageFormat}`);
     refreshSummary();
   } catch (error) {
-    statusBox.textContent = error.message;
+    statusBox.textContent = `Failed to compare selected objects: ${error.message}`;
   }
 }
 
@@ -620,7 +664,7 @@ async function previewPanel() {
     setDownloadBlob(downloadBlob, `panel.${imageFormat}`);
     refreshSummary();
   } catch (error) {
-    statusBox.textContent = error.message;
+    statusBox.textContent = `Failed to render panel: ${error.message}`;
   }
 }
 
@@ -632,6 +676,12 @@ async function fetchPanelImage(imageFormat) {
       format: imageFormat,
       paths: Array.from(comparePaths),
       columns: panelColumnsInput.value,
+      sharedX: panelSharedXInput.checked,
+      sharedY: panelSharedYInput.checked,
+      equalRanges: panelEqualRangesInput.checked,
+      panelTitles: panelTitlesInput.checked,
+      globalTitle: panelGlobalTitleInput.value,
+      spacing: panelSpacingInput.value,
       settings: formSettings(),
     }),
   });
@@ -644,13 +694,14 @@ async function fetchPanelImage(imageFormat) {
 async function fetchCompareImage(imageFormat, paths) {
   const response = await fetch(`/api/files/${currentFileId}/compare`, {
     method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        format: imageFormat,
-        paths,
-        labels: compareLabels(paths),
-        settings: formSettings(),
-      }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      format: imageFormat,
+      paths,
+      labels: compareLabels(paths),
+      colors: compareColors(paths),
+      settings: formSettings(),
+    }),
   });
   if (!response.ok) {
     throw new Error(await errorMessage(response));
@@ -660,7 +711,55 @@ async function fetchCompareImage(imageFormat, paths) {
 
 function compareLabels(paths) {
   const labels = compareLabelsInput.value.split(/\r?\n/).map((label) => label.trim());
-  return paths.map((path, index) => labels[index] || path);
+  return paths.map((path, index) => {
+    const row = legendSettings.get(path);
+    return row?.label || labels[index] || path;
+  });
+}
+
+function compareColors(paths) {
+  return paths.map((path) => legendSettings.get(path)?.color || "");
+}
+
+function renderLegendEditor() {
+  const paths = selectedComparePaths();
+  legendEditor.innerHTML = "";
+  if (!paths.length) {
+    legendEditor.textContent = "Select TH1/TProfile objects to edit legend labels.";
+    return;
+  }
+
+  for (const path of paths) {
+    if (!legendSettings.has(path)) {
+      legendSettings.set(path, { label: path, color: "" });
+    }
+    const settings = legendSettings.get(path);
+    const row = document.createElement("div");
+    row.className = "legend-row";
+    row.innerHTML = `
+      <span title="${escapeHtml(path)}">${escapeHtml(path)}</span>
+      <input type="text" value="${escapeHtml(settings.label)}" />
+      <input type="color" value="${settings.color || "#0072B2"}" />
+      <button type="button" title="Use auto color">Auto</button>
+    `;
+    const labelInput = row.querySelector('input[type="text"]');
+    const colorInput = row.querySelector('input[type="color"]');
+    const autoButton = row.querySelector("button");
+    labelInput.addEventListener("input", () => {
+      settings.label = labelInput.value;
+      if (compareMode) refreshPlotSoon();
+    });
+    colorInput.addEventListener("input", () => {
+      settings.color = colorInput.value;
+      if (compareMode) refreshPlotSoon();
+    });
+    autoButton.addEventListener("click", () => {
+      settings.color = "";
+      colorInput.value = "#0072B2";
+      if (compareMode) refreshPlotSoon();
+    });
+    legendEditor.appendChild(row);
+  }
 }
 
 async function exportPanel() {
@@ -736,7 +835,7 @@ async function exportAll() {
       body: JSON.stringify(stylePayload(formatInput.value)),
     });
     if (!response.ok) {
-      statusBox.textContent = await errorMessage(response);
+      statusBox.textContent = `Failed to export all: ${await errorMessage(response)}`;
       return;
     }
     downloadBlob(await response.blob(), `histograms_${formatInput.value}.zip`);

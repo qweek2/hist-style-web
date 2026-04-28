@@ -261,7 +261,7 @@ def graph_error_array(graph, symmetric_name: str, low_name: str, high_name: str,
 
 
 def render_compare_th1(
-    histograms: list[tuple[str, object]],
+    histograms: list[tuple],
     options: PlotOptions | None = None,
     image_format: str = "png",
 ) -> bytes:
@@ -276,13 +276,14 @@ def render_compare_th1(
         ax.set_facecolor(options.axes_facecolor)
 
         colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-        for index, (label, hist) in enumerate(histograms):
+        for index, item in enumerate(histograms):
+            label, hist, custom_color = compare_item(item)
             values, edges = hist.to_numpy()
             widths = np.diff(edges)
             errors = profile_errors(hist, values) if plot_kind(hist) == "TProfile" else np.sqrt(np.clip(values, 0, None))
             if plot_kind(hist) != "TProfile":
                 values, errors = normalize_th1(values, errors, widths, options.normalization)
-            color = options.line_color if len(histograms) == 1 else colors[index % len(colors)]
+            color = custom_color or (options.line_color if len(histograms) == 1 else colors[index % len(colors)])
             ax.step(
                 edges[:-1],
                 values,
@@ -327,11 +328,24 @@ def render_compare_th1(
     return buffer.getvalue()
 
 
+def compare_item(item):
+    if len(item) == 3:
+        return item
+    label, hist = item
+    return label, hist, None
+
+
 def render_panel(
     objects: list[tuple[str, object]],
     options: PlotOptions | None = None,
     image_format: str = "png",
     columns: int = 2,
+    shared_x: bool = False,
+    shared_y: bool = False,
+    equal_ranges: bool = False,
+    panel_titles: bool = True,
+    global_title: str | None = None,
+    spacing: float = 0.25,
 ) -> bytes:
     options = options or PlotOptions()
     image_format = normalize_image_format(image_format)
@@ -342,21 +356,35 @@ def render_panel(
     fig_height = single_height * rows
 
     with style_context(options):
-        fig, axes = plt.subplots(rows, columns, figsize=(fig_width, fig_height), dpi=options.dpi)
+        fig, axes = plt.subplots(
+            rows,
+            columns,
+            figsize=(fig_width, fig_height),
+            dpi=options.dpi,
+            sharex=shared_x,
+            sharey=shared_y,
+        )
         fig.patch.set_facecolor(options.figure_facecolor)
         axes_array = np.asarray(axes).reshape(-1)
+        equal_limits = panel_equal_limits(objects) if equal_ranges else None
 
         for ax, (path, obj) in zip(axes_array, objects):
             ax.set_facecolor(options.axes_facecolor)
-            panel_options = PlotOptions(**{**options.__dict__, "title": path})
+            panel_options = PlotOptions(**{**options.__dict__, "title": path if panel_titles else ""})
             draw_object(ax, obj, panel_options)
+            if equal_limits:
+                ax.set_xlim(equal_limits[0], equal_limits[1])
+                ax.set_ylim(equal_limits[2], equal_limits[3])
             apply_ranges_and_scale(ax, panel_options)
             style_axes(ax, panel_options)
 
         for ax in axes_array[len(objects):]:
             ax.axis("off")
 
+        if global_title:
+            fig.suptitle(format_root_text(global_title), color=options.text_color, fontsize=options.title_font_size)
         fig.tight_layout()
+        fig.subplots_adjust(wspace=spacing, hspace=spacing)
         buffer = BytesIO()
         fig.savefig(
             buffer,
@@ -366,6 +394,33 @@ def render_panel(
         )
         plt.close(fig)
     return buffer.getvalue()
+
+
+def panel_equal_limits(objects: list[tuple[str, object]]):
+    x_min_values = []
+    x_max_values = []
+    y_min_values = []
+    y_max_values = []
+    for _, obj in objects:
+        try:
+            kind = plot_kind(obj)
+            if kind in {"TH1", "TProfile"}:
+                values, edges = obj.to_numpy()
+                x_min_values.append(float(edges[0]))
+                x_max_values.append(float(edges[-1]))
+                y_min_values.append(float(np.nanmin(values)))
+                y_max_values.append(float(np.nanmax(values)))
+            elif kind == "TGraph":
+                x_values, y_values, _, _ = graph_arrays(obj)
+                x_min_values.append(float(np.nanmin(x_values)))
+                x_max_values.append(float(np.nanmax(x_values)))
+                y_min_values.append(float(np.nanmin(y_values)))
+                y_max_values.append(float(np.nanmax(y_values)))
+        except Exception:
+            continue
+    if not x_min_values or not y_min_values:
+        return None
+    return min(x_min_values), max(x_max_values), min(y_min_values), max(y_max_values)
 
 
 def normalize_th1(values, errors, widths, normalization: str):

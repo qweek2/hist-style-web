@@ -181,6 +181,7 @@
               <span>Compare legend labels</span>
               <textarea id="compareLabelsInput" rows="2" placeholder="One label per selected curve"></textarea>
             </label>
+            <div id="legendEditor" class="legend-editor"></div>
             </div>
           </details>
           <details>
@@ -195,7 +196,35 @@
                   <option>4</option>
                 </select>
               </label>
+              <label class="checkbox-label">
+                <input id="panelSharedXInput" type="checkbox" />
+                <span>Shared X</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="panelSharedYInput" type="checkbox" />
+                <span>Shared Y</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="panelEqualRangesInput" type="checkbox" />
+                <span>Equal ranges</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="panelTitlesInput" type="checkbox" checked />
+                <span>Panel titles</span>
+              </label>
+              <label>
+                <span>Spacing</span>
+                <input id="panelSpacingInput" type="number" step="0.05" value="0.25" />
+              </label>
+              <label class="label-input">
+                <span>Global title</span>
+                <input id="panelGlobalTitleInput" type="text" placeholder="Optional panel title" />
+              </label>
             </div>
+          </details>
+          <details open>
+            <summary>Object info</summary>
+            <div id="objectInfo" class="object-info">Select an object</div>
           </details>
           <details>
             <summary>Ranges</summary>

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from plotting import PlotOptions, plot_kind, render_compare_th1, render_histogram, render_panel
-from root_reader import get_histogram, histogram_summary, list_histograms
+from root_reader import get_histogram, histogram_summary, list_histograms, object_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -154,6 +154,15 @@ def summary(file_id: str, path: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/files/{file_id}/info")
+def info(file_id: str, path: str):
+    root_path = file_path(file_id)
+    try:
+        return object_info(root_path, path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/files/{file_id}/export")
 def export_all(file_id: str, payload: dict):
     root_path = file_path(file_id)
@@ -196,6 +205,7 @@ def compare(file_id: str, payload: dict):
 
     paths = payload.get("paths", [])
     labels = payload.get("labels", [])
+    colors = payload.get("colors", [])
     if len(paths) < 2:
         raise HTTPException(status_code=400, detail="Select at least two TH1/TProfile objects")
 
@@ -207,7 +217,8 @@ def compare(file_id: str, payload: dict):
             if plot_kind(hist) not in {"TH1", "TProfile"}:
                 raise HTTPException(status_code=400, detail="Compare supports TH1 and TProfile only")
             label = labels[index] if index < len(labels) and labels[index] else path
-            histograms.append((label, hist))
+            color = colors[index] if index < len(colors) and colors[index] else None
+            histograms.append((label, hist, color))
         if options.include_summary:
             options.summary_text = f"Compared: {len(histograms)} histograms"
         image = render_compare_th1(histograms, options, image_format)
@@ -234,7 +245,18 @@ def panel(file_id: str, payload: dict):
         options = options_from_settings(payload.get("settings", {}))
         columns = int(payload.get("columns", 2))
         objects = [(path, get_histogram(root_path, path)) for path in paths]
-        image = render_panel(objects, options, image_format, columns=columns)
+        image = render_panel(
+            objects,
+            options,
+            image_format,
+            columns=columns,
+            shared_x=bool(payload.get("sharedX", False)),
+            shared_y=bool(payload.get("sharedY", False)),
+            equal_ranges=bool(payload.get("equalRanges", False)),
+            panel_titles=bool(payload.get("panelTitles", True)),
+            global_title=empty_to_none(payload.get("globalTitle")),
+            spacing=optional_float(payload.get("spacing"), 0.25) or 0.25,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -359,9 +381,16 @@ def format_number(value: float) -> str:
 def cleanup_uploads() -> None:
     now = time.time()
     for path in UPLOAD_DIR.glob("*.root"):
-        if now - path.stat().st_mtime <= UPLOAD_TTL_SECONDS:
+        try:
+            age = now - path.stat().st_mtime
+        except OSError:
             continue
-        path.unlink(missing_ok=True)
+        if age <= UPLOAD_TTL_SECONDS:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
         for file_id, stored_path in list(FILES.items()):
             if stored_path == path:
                 FILES.pop(file_id, None)

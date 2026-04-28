@@ -44,6 +44,57 @@ def histogram_summary(root_path: Path, hist_path: str) -> dict:
     return th1_summary(hist)
 
 
+def object_info(root_path: Path, hist_path: str) -> dict:
+    obj = get_histogram(root_path, hist_path)
+    kind = histogram_kind(obj.classname) or obj.classname
+    info = {
+        "path": hist_path,
+        "className": obj.classname,
+        "kind": kind,
+        "title": member_text(obj, "fTitle"),
+    }
+
+    if kind in {"TH1", "TProfile"}:
+        values, edges = obj.to_numpy()
+        info.update(
+            {
+                "binsX": int(len(values)),
+                "xMin": float(edges[0]),
+                "xMax": float(edges[-1]),
+                "xTitle": axis_title(obj, 0),
+                "yTitle": axis_title(obj, 1),
+                "entries": member_float(obj, "fEntries"),
+            }
+        )
+    elif kind == "TH2":
+        values, x_edges, y_edges = obj.to_numpy()
+        info.update(
+            {
+                "binsX": int(values.shape[0]),
+                "binsY": int(values.shape[1]),
+                "xMin": float(x_edges[0]),
+                "xMax": float(x_edges[-1]),
+                "yMin": float(y_edges[0]),
+                "yMax": float(y_edges[-1]),
+                "xTitle": axis_title(obj, 0),
+                "yTitle": axis_title(obj, 1),
+                "entries": member_float(obj, "fEntries"),
+            }
+        )
+    elif kind == "TGraph":
+        x_values, y_values, _, _ = graph_arrays(obj)
+        info.update(
+            {
+                "points": int(len(x_values)),
+                "xMin": float(np.min(x_values)) if len(x_values) else 0.0,
+                "xMax": float(np.max(x_values)) if len(x_values) else 0.0,
+                "yMin": float(np.min(y_values)) if len(y_values) else 0.0,
+                "yMax": float(np.max(y_values)) if len(y_values) else 0.0,
+            }
+        )
+    return info
+
+
 def th1_summary(hist) -> dict:
     values, edges = hist.to_numpy()
     centers = 0.5 * (edges[:-1] + edges[1:])
@@ -135,6 +186,21 @@ def member_float(obj, name: str) -> float:
         return float(obj.member(name))
     except Exception:
         return 0.0
+
+
+def member_text(obj, name: str) -> str:
+    try:
+        value = obj.member(name)
+    except Exception:
+        return ""
+    return str(value or "")
+
+
+def axis_title(obj, axis_index: int) -> str:
+    try:
+        return member_text(obj.axis(axis_index), "fTitle")
+    except Exception:
+        return ""
 
 
 def histogram_kind(class_name: str) -> str | None:

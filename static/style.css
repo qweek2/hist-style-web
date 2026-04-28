@@ -356,6 +356,63 @@ h1 {
   resize: vertical;
 }
 
+.legend-editor {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  color: #68778c;
+  font-size: 12px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.legend-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4d5b6d;
+}
+
+.legend-row input[type="text"] {
+  width: 100%;
+}
+
+.legend-row input[type="color"] {
+  width: 38px;
+}
+
+.legend-row button {
+  height: 30px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+}
+
+.object-info {
+  display: grid;
+  gap: 6px;
+  color: #4d5b6d;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.object-info div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.object-info strong {
+  color: #172033;
+}
+
 .settings .font-size-input select {
   width: 72px;
 }
