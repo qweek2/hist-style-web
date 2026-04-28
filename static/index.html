@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Histogram Style Web</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="sidebar">
+        <h1>Histogram Style Web</h1>
+        <label id="dropZone" class="drop-zone">
+          <input id="fileInput" type="file" accept=".root" />
+          <span>Drop ROOT file here</span>
+        </label>
+        <div id="status" class="status">No file loaded</div>
+        <input id="searchInput" class="search-input" type="search" placeholder="Search histograms" />
+        <button id="compareButton" class="button compare-button" type="button" disabled>Compare selected</button>
+        <div id="histList" class="hist-list"></div>
+      </section>
+
+      <section class="preview">
+        <div class="preview-toolbar">
+          <div id="selectedName">Select a histogram</div>
+          <div class="toolbar-actions">
+            <select id="formatInput" aria-label="Export format">
+              <option value="png" selected>PNG</option>
+              <option value="pdf">PDF</option>
+              <option value="svg">SVG</option>
+            </select>
+            <a id="downloadLink" class="button disabled" download="histogram.png">Download</a>
+            <button id="exportAllButton" class="button" type="button" disabled>Export all</button>
+            <button id="saveStyleButton" class="ghost-button" type="button">Save style</button>
+            <label class="ghost-button">
+              Load style
+              <input id="styleFileInput" type="file" accept=".json,application/json" />
+            </label>
+          </div>
+        </div>
+        <div class="settings">
+          <details open>
+            <summary>Plot</summary>
+            <div class="settings-row">
+            <label>
+              <span>DPI</span>
+              <select id="dpiInput">
+                <option>100</option>
+                <option>150</option>
+                <option selected>200</option>
+                <option>250</option>
+                <option>300</option>
+              </select>
+            </label>
+            <label>
+              <span>Aspect</span>
+              <input id="aspectRatioInput" type="text" value="16:10" placeholder="16:9" />
+            </label>
+            <label>
+              <span>X scale</span>
+              <span class="segmented" data-scale="x">
+                <button type="button" class="active" data-value="linear">lin</button>
+                <button type="button" data-value="log">log</button>
+              </span>
+            </label>
+            <label>
+              <span>Y scale</span>
+              <span class="segmented" data-scale="y">
+                <button type="button" class="active" data-value="linear">lin</button>
+                <button type="button" data-value="log">log</button>
+              </span>
+            </label>
+            <label>
+              <span>Z scale</span>
+              <span class="segmented" data-scale="z">
+                <button type="button" class="active" data-value="linear">lin</button>
+                <button type="button" data-value="log">log</button>
+              </span>
+            </label>
+            <label>
+              <span>Line width</span>
+              <select id="lineWidthInput">
+                <option value="1">1</option>
+                <option value="1.5">1.5</option>
+                <option value="2" selected>2</option>
+                <option value="2.5">2.5</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+            <label>
+              <span>Line color</span>
+              <input id="lineColorInput" type="color" value="#1f77b4" />
+            </label>
+            <label>
+              <span>Colormap</span>
+              <select id="colormapInput">
+                <option value="white-blue" selected>white-blue</option>
+                <option value="white-red">white-red</option>
+                <option value="viridis">viridis</option>
+                <option value="magma">magma</option>
+                <option value="gray">gray</option>
+              </select>
+            </label>
+            <label>
+              <span>Normalize</span>
+              <select id="normalizationInput">
+                <option value="raw" selected>raw</option>
+                <option value="area">area=1</option>
+                <option value="max">max=1</option>
+                <option value="bin_width">bin width</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input id="showErrorsInput" type="checkbox" checked />
+              <span>Show errors</span>
+            </label>
+            <label class="checkbox-label">
+              <input id="showLegendInput" type="checkbox" checked />
+              <span>Legend</span>
+            </label>
+            <label class="checkbox-label">
+              <input id="customInput" type="checkbox" disabled />
+              <span>Custom for selected</span>
+            </label>
+            </div>
+          </details>
+          <details>
+            <summary>Labels</summary>
+            <div class="settings-row">
+            <label class="label-input">
+              <span>Title</span>
+              <input id="titleInput" type="text" placeholder="ROOT title" />
+            </label>
+            <label class="label-input">
+              <span>X label</span>
+              <input id="xLabelInput" type="text" placeholder="ROOT x label" />
+            </label>
+            <label class="label-input">
+              <span>Y label</span>
+              <input id="yLabelInput" type="text" placeholder="ROOT y label" />
+            </label>
+            <label class="font-size-input">
+              <span>Title size</span>
+              <select id="titleFontSizeInput">
+                <option>10</option>
+                <option>11</option>
+                <option>12</option>
+                <option selected>13</option>
+                <option>14</option>
+                <option>16</option>
+                <option>18</option>
+                <option>20</option>
+              </select>
+            </label>
+            <label class="font-size-input">
+              <span>Label size</span>
+              <select id="labelFontSizeInput">
+                <option>9</option>
+                <option>10</option>
+                <option selected>11</option>
+                <option>12</option>
+                <option>13</option>
+                <option>14</option>
+                <option>16</option>
+                <option>18</option>
+              </select>
+            </label>
+            <label class="font-size-input">
+              <span>Tick size</span>
+              <select id="tickFontSizeInput">
+                <option>8</option>
+                <option>9</option>
+                <option selected>10</option>
+                <option>11</option>
+                <option>12</option>
+                <option>13</option>
+                <option>14</option>
+                <option>16</option>
+              </select>
+            </label>
+            </div>
+          </details>
+          <details>
+            <summary>Ranges</summary>
+            <div class="settings-row">
+            <label>
+              <span>X min</span>
+              <input id="xMinInput" type="number" step="any" placeholder="auto" />
+            </label>
+            <label>
+              <span>X max</span>
+              <input id="xMaxInput" type="number" step="any" placeholder="auto" />
+            </label>
+            <label>
+              <span>Y min</span>
+              <input id="yMinInput" type="number" step="any" placeholder="auto" />
+            </label>
+            <label>
+              <span>Y max</span>
+              <input id="yMaxInput" type="number" step="any" placeholder="auto" />
+            </label>
+            <label>
+              <span>Z min</span>
+              <input id="zMinInput" type="number" step="any" placeholder="auto" />
+            </label>
+            <label>
+              <span>Z max</span>
+              <input id="zMaxInput" type="number" step="any" placeholder="auto" />
+            </label>
+            </div>
+          </details>
+          <details>
+            <summary>Summary</summary>
+            <div class="settings-row">
+              <label class="checkbox-label">
+                <input id="showSummaryInput" type="checkbox" checked />
+                <span>Show summary</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="includeSummaryInput" type="checkbox" />
+                <span>Include in image</span>
+              </label>
+            </div>
+          </details>
+        </div>
+        <div class="plot-frame">
+          <img id="plotImage" alt="" />
+          <div id="summaryLine" class="summary-line"></div>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

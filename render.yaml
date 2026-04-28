@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: hist-style-web
+    runtime: docker
+    plan: free
+    envVars:
+      - key: MAX_UPLOAD_MB
+        value: "200"
+      - key: UPLOAD_TTL_SECONDS
+        value: "3600"

@@ -1,0 +1,407 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  background: #f5f7fb;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  display: grid;
+  grid-template-rows: auto auto auto auto auto 1fr;
+  min-height: 0;
+  border-right: 1px solid #d9e0ea;
+  background: #ffffff;
+  padding: 18px;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.drop-zone {
+  display: grid;
+  place-items: center;
+  min-height: 82px;
+  border: 2px dashed #9aa9bc;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #4d5b6d;
+  cursor: pointer;
+  text-align: center;
+}
+
+.drop-zone.active {
+  border-color: #1f77b4;
+  background: #eef7ff;
+}
+
+.drop-zone input {
+  display: none;
+}
+
+.status {
+  margin: 10px 0;
+  color: #56657a;
+  font-size: 14px;
+}
+
+.search-input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  padding: 0 10px;
+  font: inherit;
+  margin-bottom: 8px;
+}
+
+.compare-button {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.hist-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.hist-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  width: 100%;
+  border: 1px solid #d9e0ea;
+  border-radius: 6px;
+  background: #ffffff;
+  color: inherit;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.compare-check {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.hist-item:hover,
+.hist-item.active {
+  border-color: #1f77b4;
+  background: #f1f8ff;
+}
+
+.hist-item span {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hist-item small {
+  display: block;
+  margin-top: 4px;
+  color: #68778c;
+}
+
+.preview {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #d9e0ea;
+  background: #ffffff;
+  padding: 10px 18px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#selectedName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.button {
+  border: 1px solid #1f77b4;
+  border-radius: 6px;
+  background: #1f77b4;
+  color: #ffffff;
+  padding: 9px 13px;
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.button.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+.ghost-button {
+  display: inline-grid;
+  place-items: center;
+  height: 34px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  padding: 0 11px;
+  text-decoration: none;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ghost-button input {
+  display: none;
+}
+
+.settings {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid #d9e0ea;
+  background: #ffffff;
+  padding: 10px 18px;
+}
+
+.settings details {
+  border-bottom: 1px solid #edf1f6;
+  padding-bottom: 8px;
+}
+
+.settings details:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings summary {
+  cursor: pointer;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings summary::before {
+  content: "+";
+  display: inline-block;
+  width: 16px;
+  color: #68778c;
+}
+
+.settings details[open] summary::before {
+  content: "-";
+}
+
+.settings details[open] .settings-row {
+  margin-top: 8px;
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.settings label {
+  display: grid;
+  gap: 5px;
+  color: #4d5b6d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings select,
+.settings input[type="number"],
+.settings input[type="text"],
+.toolbar-actions select {
+  width: 92px;
+  height: 30px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.toolbar-actions select {
+  width: 72px;
+  height: 34px;
+}
+
+.settings input[type="color"] {
+  width: 46px;
+  height: 30px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 2px;
+}
+
+.segmented {
+  display: inline-flex;
+  height: 30px;
+  overflow: hidden;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.segmented button {
+  min-width: 38px;
+  border: 0;
+  border-right: 1px solid #cdd6e2;
+  background: #ffffff;
+  color: #4d5b6d;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button.active {
+  background: #1f77b4;
+  color: #ffffff;
+}
+
+.settings .label-input {
+  flex: 1 1 150px;
+}
+
+.settings .label-input input {
+  width: 100%;
+}
+
+.settings .font-size-input select {
+  width: 72px;
+}
+
+.settings .checkbox-label {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  color: #172033;
+  font-size: 14px;
+}
+
+.settings input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.plot-frame {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.plot-frame img {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  background: #ffffff;
+  border: 1px solid #d9e0ea;
+}
+
+.summary-line {
+  width: 100%;
+  min-height: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #3f4c5f;
+  font-size: 14px;
+  padding: 8px 2px 0;
+  text-align: center;
+}
+
+@media (max-width: 780px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    overflow: auto;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #d9e0ea;
+  }
+
+  .hist-list {
+    max-height: 260px;
+  }
+
+  html,
+  body {
+    overflow: auto;
+  }
+}
