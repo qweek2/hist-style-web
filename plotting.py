@@ -431,8 +431,8 @@ def format_root_text(text: str) -> str:
         return ""
 
     formatted = text
-    for root_symbol, math_symbol in ROOT_SYMBOLS.items():
-        formatted = formatted.replace(root_symbol, math_symbol)
+    for root_symbol, math_symbol in sorted(ROOT_SYMBOLS.items(), key=lambda item: len(item[0]), reverse=True):
+        formatted = formatted.replace(root_symbol, f"${math_symbol}$")
 
     formatted = formatted.replace("#", "\\")
     formatted = re.sub(r"([A-Za-z0-9\\]+(?:[_^]\{[^{}]+\})+)", r"$\1$", formatted)
