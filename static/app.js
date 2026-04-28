@@ -12,6 +12,7 @@ const formatInput = document.querySelector("#formatInput");
 const exportAllButton = document.querySelector("#exportAllButton");
 const saveStyleButton = document.querySelector("#saveStyleButton");
 const styleFileInput = document.querySelector("#styleFileInput");
+const stylePresetInput = document.querySelector("#stylePresetInput");
 const dpiInput = document.querySelector("#dpiInput");
 const aspectRatioInput = document.querySelector("#aspectRatioInput");
 const lineWidthInput = document.querySelector("#lineWidthInput");
@@ -46,6 +47,7 @@ let compareMode = false;
 let compareObjectUrl = null;
 
 const globalSettings = {
+  stylePreset: "journal",
   dpi: "200",
   aspectRatio: "16:10",
   xScale: "linear",
@@ -71,8 +73,107 @@ const globalSettings = {
   zMax: "",
   showSummary: true,
   includeSummary: false,
+  fontFamily: "Arial, Helvetica, Liberation Sans, DejaVu Sans",
+  figureFacecolor: "#ffffff",
+  axesFacecolor: "#ffffff",
+  textColor: "#111827",
+  axisColor: "#111827",
+  tickDirection: "out",
 };
 const histSettings = new Map();
+
+const PRESETS = {
+  journal: {
+    stylePreset: "journal",
+    dpi: "300",
+    aspectRatio: "16:10",
+    lineWidth: "1.5",
+    lineColor: "#111827",
+    colormap: "white-blue",
+    titleFontSize: "11",
+    labelFontSize: "9",
+    tickFontSize: "8",
+    showLegend: true,
+    fontFamily: "Arial, Helvetica, Liberation Sans, DejaVu Sans",
+    figureFacecolor: "#ffffff",
+    axesFacecolor: "#ffffff",
+    textColor: "#111827",
+    axisColor: "#111827",
+    tickDirection: "out",
+  },
+  presentation: {
+    stylePreset: "presentation",
+    dpi: "200",
+    aspectRatio: "16:9",
+    lineWidth: "3",
+    lineColor: "#2563eb",
+    colormap: "viridis",
+    titleFontSize: "22",
+    labelFontSize: "17",
+    tickFontSize: "14",
+    showLegend: true,
+    fontFamily: "Inter, Avenir Next, Aptos, Segoe UI, Arial, DejaVu Sans",
+    figureFacecolor: "#ffffff",
+    axesFacecolor: "#ffffff",
+    textColor: "#111827",
+    axisColor: "#111827",
+    tickDirection: "out",
+  },
+  hep: {
+    stylePreset: "hep",
+    dpi: "300",
+    aspectRatio: "4:3",
+    lineWidth: "2",
+    lineColor: "#000000",
+    colormap: "white-blue",
+    titleFontSize: "13",
+    labelFontSize: "12",
+    tickFontSize: "11",
+    showLegend: true,
+    fontFamily: "Helvetica, Arial, Liberation Sans, DejaVu Sans",
+    figureFacecolor: "#ffffff",
+    axesFacecolor: "#ffffff",
+    textColor: "#000000",
+    axisColor: "#000000",
+    tickDirection: "in",
+  },
+  nature: {
+    stylePreset: "nature",
+    dpi: "300",
+    aspectRatio: "16:10",
+    lineWidth: "1.2",
+    lineColor: "#000000",
+    colormap: "viridis",
+    titleFontSize: "7",
+    labelFontSize: "7",
+    tickFontSize: "6",
+    showLegend: true,
+    fontFamily: "Arial, Helvetica, Liberation Sans, DejaVu Sans",
+    figureFacecolor: "#ffffff",
+    axesFacecolor: "#ffffff",
+    textColor: "#000000",
+    axisColor: "#000000",
+    tickDirection: "out",
+  },
+  dark: {
+    stylePreset: "dark",
+    dpi: "200",
+    aspectRatio: "16:9",
+    lineWidth: "3",
+    lineColor: "#60a5fa",
+    colormap: "magma",
+    titleFontSize: "22",
+    labelFontSize: "17",
+    tickFontSize: "14",
+    showLegend: true,
+    fontFamily: "Inter, Avenir Next, Aptos, Segoe UI, Arial, DejaVu Sans",
+    figureFacecolor: "#0b1020",
+    axesFacecolor: "#0b1020",
+    textColor: "#f8fafc",
+    axisColor: "#cbd5e1",
+    tickDirection: "out",
+  },
+};
 
 fileInput.addEventListener("change", () => {
   if (fileInput.files.length) uploadFile(fileInput.files[0]);
@@ -87,6 +188,12 @@ fileInput.addEventListener("change", () => {
     saveSettingsFromForm();
     refreshPlotSoon();
   });
+});
+
+stylePresetInput.addEventListener("change", () => {
+  applyPreset(stylePresetInput.value);
+  loadSettingsToForm();
+  refreshPlotSoon();
 });
 
 formatInput.addEventListener("change", () => {
@@ -328,6 +435,12 @@ function plotUrl(hist, imageFormat = "png") {
   params.set("show_errors", settings.showErrors ? "true" : "false");
   params.set("show_legend", settings.showLegend ? "true" : "false");
   params.set("include_summary", settings.includeSummary ? "true" : "false");
+  params.set("font_family", settings.fontFamily);
+  params.set("figure_facecolor", settings.figureFacecolor);
+  params.set("axes_facecolor", settings.axesFacecolor);
+  params.set("text_color", settings.textColor);
+  params.set("axis_color", settings.axisColor);
+  params.set("tick_direction", settings.tickDirection);
   addTextParam(params, "title", settings.title);
   addTextParam(params, "x_label", settings.xLabel);
   addTextParam(params, "y_label", settings.yLabel);
@@ -372,6 +485,7 @@ function activeSettingsTarget() {
 
 function saveSettingsFromForm() {
   const target = activeSettingsTarget();
+  target.stylePreset = stylePresetInput.value;
   target.dpi = dpiInput.value;
   target.aspectRatio = aspectRatioInput.value;
   target.xScale = scaleValue("x");
@@ -401,6 +515,7 @@ function saveSettingsFromForm() {
 
 function loadSettingsToForm() {
   const settings = currentHist ? effectiveSettings(currentHist) : globalSettings;
+  stylePresetInput.value = settings.stylePreset || "journal";
   dpiInput.value = settings.dpi;
   aspectRatioInput.value = settings.aspectRatio;
   setScaleControl("x", settings.xScale);
@@ -426,6 +541,11 @@ function loadSettingsToForm() {
   zMaxInput.value = settings.zMax;
   showSummaryInput.checked = settings.showSummary;
   includeSummaryInput.checked = settings.includeSummary;
+}
+
+function applyPreset(name) {
+  const target = activeSettingsTarget();
+  Object.assign(target, PRESETS[name] || PRESETS.journal);
 }
 
 async function compareSelected() {

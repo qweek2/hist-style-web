@@ -24,6 +24,12 @@ class PlotOptions:
     show_legend: bool = True
     include_summary: bool = False
     summary_text: str | None = None
+    font_family: str = "Arial, Helvetica, Liberation Sans, DejaVu Sans"
+    figure_facecolor: str = "#ffffff"
+    axes_facecolor: str = "#ffffff"
+    text_color: str = "#111827"
+    axis_color: str = "#111827"
+    tick_direction: str = "out"
     line_width: float = 2.0
     line_color: str = "#1f77b4"
     title: str | None = None
@@ -47,33 +53,30 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
 
     plt.style.use("default")
     fig_width, fig_height = figure_size(options.aspect_ratio)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    with style_context(options):
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+        fig.patch.set_facecolor(options.figure_facecolor)
+        ax.set_facecolor(options.axes_facecolor)
 
-    if kind == "TH2":
-        draw_th2(ax, hist, options)
-    else:
-        draw_th1(ax, hist, options)
+        if kind == "TH2":
+            draw_th2(ax, hist, options)
+        else:
+            draw_th1(ax, hist, options)
 
-    apply_ranges_and_scale(ax, options)
-
-    ax.tick_params(
-        direction="out",
-        length=5,
-        width=1,
-        labelsize=options.tick_font_size,
-    )
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.1)
-
-    add_summary_to_figure(fig, options)
-    fig.tight_layout()
-    if options.include_summary and options.summary_text:
-        fig.subplots_adjust(bottom=0.16)
-    buffer = BytesIO()
-    fig.savefig(buffer, format=image_format, bbox_inches="tight")
-    plt.close(fig)
+        apply_ranges_and_scale(ax, options)
+        style_axes(ax, options)
+        add_summary_to_figure(fig, options)
+        fig.tight_layout()
+        if options.include_summary and options.summary_text:
+            fig.subplots_adjust(bottom=0.16)
+        buffer = BytesIO()
+        fig.savefig(
+            buffer,
+            format=image_format,
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor(),
+        )
+        plt.close(fig)
     return buffer.getvalue()
 
 
@@ -144,8 +147,9 @@ def draw_th2(ax, hist, options: PlotOptions) -> None:
         shading="auto",
     )
     cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
-    cbar.set_label("Entries")
-    cbar.ax.tick_params(labelsize=options.tick_font_size)
+    cbar.set_label("Entries", color=options.text_color, fontsize=options.label_font_size)
+    cbar.ax.tick_params(labelsize=options.tick_font_size, colors=options.axis_color)
+    cbar.outline.set_edgecolor(options.axis_color)
 
     apply_labels(ax, hist, options, default_y_label="y")
 
@@ -160,53 +164,59 @@ def render_compare_th1(
 
     plt.style.use("default")
     fig_width, fig_height = figure_size(options.aspect_ratio)
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    with style_context(options):
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+        fig.patch.set_facecolor(options.figure_facecolor)
+        ax.set_facecolor(options.axes_facecolor)
 
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    for index, (label, hist) in enumerate(histograms):
-        values, edges = hist.to_numpy()
-        widths = np.diff(edges)
-        errors = np.sqrt(np.clip(values, 0, None))
-        values, errors = normalize_th1(values, errors, widths, options.normalization)
-        color = options.line_color if len(histograms) == 1 else colors[index % len(colors)]
-        ax.step(
-            edges[:-1],
-            values,
-            where="post",
-            linewidth=options.line_width,
-            color=color,
-            label=label,
-        )
-        if options.show_errors:
-            centers = 0.5 * (edges[:-1] + edges[1:])
-            ax.errorbar(
-                centers,
+        colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        for index, (label, hist) in enumerate(histograms):
+            values, edges = hist.to_numpy()
+            widths = np.diff(edges)
+            errors = np.sqrt(np.clip(values, 0, None))
+            values, errors = normalize_th1(values, errors, widths, options.normalization)
+            color = options.line_color if len(histograms) == 1 else colors[index % len(colors)]
+            ax.step(
+                edges[:-1],
                 values,
-                yerr=errors,
-                fmt="none",
-                ecolor=color,
-                elinewidth=max(0.8, options.line_width * 0.55),
-                capsize=1.8,
-                alpha=0.8,
+                where="post",
+                linewidth=options.line_width,
+                color=color,
+                label=label,
             )
+            if options.show_errors:
+                centers = 0.5 * (edges[:-1] + edges[1:])
+                ax.errorbar(
+                    centers,
+                    values,
+                    yerr=errors,
+                    fmt="none",
+                    ecolor=color,
+                    elinewidth=max(0.8, options.line_width * 0.55),
+                    capsize=1.8,
+                    alpha=0.8,
+                )
 
-    apply_labels(ax, histograms[0][1], options, default_y_label="Entries")
-    apply_ranges_and_scale(ax, options)
-    ax.tick_params(direction="out", length=5, width=1, labelsize=options.tick_font_size)
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.1)
-    if options.show_legend:
-        ax.legend(frameon=False, fontsize=options.tick_font_size)
+        apply_labels(ax, histograms[0][1], options, default_y_label="Entries")
+        apply_ranges_and_scale(ax, options)
+        style_axes(ax, options)
+        if options.show_legend:
+            legend = ax.legend(frameon=False, fontsize=options.tick_font_size)
+            for text in legend.get_texts():
+                text.set_color(options.text_color)
 
-    add_summary_to_figure(fig, options)
-    fig.tight_layout()
-    if options.include_summary and options.summary_text:
-        fig.subplots_adjust(bottom=0.16)
-    buffer = BytesIO()
-    fig.savefig(buffer, format=image_format, bbox_inches="tight")
-    plt.close(fig)
+        add_summary_to_figure(fig, options)
+        fig.tight_layout()
+        if options.include_summary and options.summary_text:
+            fig.subplots_adjust(bottom=0.16)
+        buffer = BytesIO()
+        fig.savefig(
+            buffer,
+            format=image_format,
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor(),
+        )
+        plt.close(fig)
     return buffer.getvalue()
 
 
@@ -235,6 +245,46 @@ def figure_size(aspect_ratio: float) -> tuple[float, float]:
     return float(width), float(height)
 
 
+def style_context(options: PlotOptions):
+    return plt.rc_context(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": font_stack(options.font_family),
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+            "svg.fonttype": "none",
+            "axes.prop_cycle": plt.cycler(
+                color=[
+                    "#0072B2",
+                    "#D55E00",
+                    "#009E73",
+                    "#CC79A7",
+                    "#E69F00",
+                    "#56B4E9",
+                    "#000000",
+                ]
+            ),
+        }
+    )
+
+
+def font_stack(font_family: str) -> list[str]:
+    return [font.strip() for font in font_family.split(",") if font.strip()]
+
+
+def style_axes(ax, options: PlotOptions) -> None:
+    ax.tick_params(
+        direction=options.tick_direction,
+        length=5,
+        width=1,
+        labelsize=options.tick_font_size,
+        colors=options.axis_color,
+    )
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.1)
+        spine.set_color(options.axis_color)
+
+
 def add_summary_to_figure(fig, options: PlotOptions) -> None:
     if not options.include_summary or not options.summary_text:
         return
@@ -245,7 +295,7 @@ def add_summary_to_figure(fig, options: PlotOptions) -> None:
         ha="center",
         va="bottom",
         fontsize=max(7, options.tick_font_size),
-        color="#3f4c5f",
+        color=options.text_color,
     )
 
 
@@ -257,6 +307,9 @@ def apply_labels(ax, hist, options: PlotOptions, default_y_label: str) -> None:
     ax.set_xlabel(format_root_text(x_label), fontsize=options.label_font_size)
     ax.set_ylabel(format_root_text(y_label), fontsize=options.label_font_size)
     ax.set_title(format_root_text(title), pad=12, fontsize=options.title_font_size)
+    ax.xaxis.label.set_color(options.text_color)
+    ax.yaxis.label.set_color(options.text_color)
+    ax.title.set_color(options.text_color)
 
 
 def selected_colormap(name: str):
