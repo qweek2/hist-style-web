@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Histogram Style Web</title>
+    <link rel="icon" href="/static/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="/static/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -17,6 +20,8 @@
         <div id="status" class="status">No file loaded</div>
         <input id="searchInput" class="search-input" type="search" placeholder="Search histograms" />
         <button id="compareButton" class="button compare-button" type="button" disabled>Compare selected</button>
+        <button id="previewPanelButton" class="ghost-button compare-button" type="button" disabled>Preview panel</button>
+        <button id="panelButton" class="ghost-button compare-button" type="button" disabled>Export panel</button>
         <div id="histList" class="hist-list"></div>
       </section>
 
@@ -189,6 +194,24 @@
                 <option>16</option>
               </select>
             </label>
+            <label class="label-input">
+              <span>Compare legend labels</span>
+              <textarea id="compareLabelsInput" rows="2" placeholder="One label per selected curve"></textarea>
+            </label>
+            </div>
+          </details>
+          <details>
+            <summary>Panel</summary>
+            <div class="settings-row">
+              <label>
+                <span>Columns</span>
+                <select id="panelColumnsInput">
+                  <option>1</option>
+                  <option selected>2</option>
+                  <option>3</option>
+                  <option>4</option>
+                </select>
+              </label>
             </div>
           </details>
           <details>

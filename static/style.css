@@ -334,6 +334,19 @@ h1 {
   width: 100%;
 }
 
+.settings .label-input textarea {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid #cdd6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
 .settings .font-size-input select {
   width: 72px;
 }

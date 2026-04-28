@@ -3,6 +3,8 @@ const dropZone = document.querySelector("#dropZone");
 const statusBox = document.querySelector("#status");
 const searchInput = document.querySelector("#searchInput");
 const compareButton = document.querySelector("#compareButton");
+const previewPanelButton = document.querySelector("#previewPanelButton");
+const panelButton = document.querySelector("#panelButton");
 const histList = document.querySelector("#histList");
 const plotImage = document.querySelector("#plotImage");
 const summaryLine = document.querySelector("#summaryLine");
@@ -25,6 +27,7 @@ const customInput = document.querySelector("#customInput");
 const titleInput = document.querySelector("#titleInput");
 const xLabelInput = document.querySelector("#xLabelInput");
 const yLabelInput = document.querySelector("#yLabelInput");
+const compareLabelsInput = document.querySelector("#compareLabelsInput");
 const titleFontSizeInput = document.querySelector("#titleFontSizeInput");
 const labelFontSizeInput = document.querySelector("#labelFontSizeInput");
 const tickFontSizeInput = document.querySelector("#tickFontSizeInput");
@@ -36,6 +39,7 @@ const zMinInput = document.querySelector("#zMinInput");
 const zMaxInput = document.querySelector("#zMaxInput");
 const showSummaryInput = document.querySelector("#showSummaryInput");
 const includeSummaryInput = document.querySelector("#includeSummaryInput");
+const panelColumnsInput = document.querySelector("#panelColumnsInput");
 const scaleControls = document.querySelectorAll(".segmented[data-scale]");
 
 let currentFileId = null;
@@ -44,6 +48,7 @@ let refreshTimer = null;
 let allHistograms = [];
 let comparePaths = new Set();
 let compareMode = false;
+let panelMode = false;
 let compareObjectUrl = null;
 
 const globalSettings = {
@@ -199,12 +204,16 @@ stylePresetInput.addEventListener("change", () => {
 formatInput.addEventListener("change", () => {
   if (compareMode) {
     compareSelected();
+  } else if (panelMode) {
+    previewPanel();
   } else {
     updateDownloadLink();
   }
 });
 exportAllButton.addEventListener("click", exportAll);
 compareButton.addEventListener("click", compareSelected);
+previewPanelButton.addEventListener("click", previewPanel);
+panelButton.addEventListener("click", exportPanel);
 saveStyleButton.addEventListener("click", saveStyle);
 styleFileInput.addEventListener("change", loadStyle);
 searchInput.addEventListener("input", () => renderHistogramList(filteredHistograms()));
@@ -274,6 +283,7 @@ async function uploadFile(file) {
   allHistograms = data.histograms;
   comparePaths.clear();
   compareMode = false;
+  panelMode = false;
   histSettings.clear();
   customInput.checked = false;
   customInput.disabled = true;
@@ -291,7 +301,7 @@ function renderHistogramList(histograms) {
     button.className = "hist-item";
     button.type = "button";
     button.innerHTML = `
-      <input class="compare-check" type="checkbox" ${hist.kind === "TH1" ? "" : "disabled"} ${comparePaths.has(hist.path) ? "checked" : ""} />
+      <input class="compare-check" type="checkbox" ${comparePaths.has(hist.path) ? "checked" : ""} />
       <span>${escapeHtml(hist.path)}</span>
       <small>${escapeHtml(hist.className)}</small>
     `;
@@ -313,6 +323,7 @@ function selectHistogram(hist, button) {
 
   currentHist = hist;
   compareMode = false;
+  panelMode = false;
   customInput.disabled = false;
   customInput.checked = histSettings.has(hist.path);
   loadSettingsToForm();
@@ -340,8 +351,20 @@ function toggleCompare(path, checked) {
 }
 
 function updateCompareButton() {
-  compareButton.disabled = comparePaths.size < 2;
-  compareButton.textContent = `Compare selected (${comparePaths.size})`;
+  const compareCount = selectedComparePaths().length;
+  compareButton.disabled = compareCount < 2;
+  compareButton.textContent = `Compare selected (${compareCount})`;
+  panelButton.disabled = comparePaths.size < 1;
+  panelButton.textContent = `Export panel (${comparePaths.size})`;
+  previewPanelButton.disabled = comparePaths.size < 1;
+  previewPanelButton.textContent = `Preview panel (${comparePaths.size})`;
+}
+
+function selectedComparePaths() {
+  return Array.from(comparePaths).filter((path) => {
+    const hist = allHistograms.find((item) => item.path === path);
+    return hist && (hist.kind === "TH1" || hist.kind === "TProfile");
+  });
 }
 
 function refreshPlotSoon() {
@@ -352,6 +375,10 @@ function refreshPlotSoon() {
 function refreshPlot() {
   if (compareMode) {
     compareSelected();
+    return;
+  }
+  if (panelMode) {
+    previewPanel();
     return;
   }
 
@@ -365,6 +392,7 @@ function refreshPlot() {
 
 function updateDownloadLink() {
   if (!currentFileId || !currentHist) return;
+  if (compareMode || panelMode) return;
   const imageFormat = formatInput.value;
   downloadLink.href = plotUrl(currentHist, imageFormat);
   downloadLink.download = `${safeName(currentHist.path)}.${imageFormat}`;
@@ -379,6 +407,10 @@ async function refreshSummary() {
   summaryLine.hidden = false;
   if (compareMode) {
     summaryLine.textContent = `Compared: ${comparePaths.size} histograms`;
+    return;
+  }
+  if (panelMode) {
+    summaryLine.textContent = `Panel: ${comparePaths.size} objects`;
     return;
   }
   if (!currentFileId || !currentHist) return;
@@ -554,9 +586,12 @@ function applyPreset(name) {
 
 async function compareSelected() {
   if (!currentFileId || comparePaths.size < 2) return;
+  const paths = selectedComparePaths();
+  if (paths.length < 2) return;
 
   saveSettingsFromForm();
   compareMode = true;
+  panelMode = false;
   selectedName.textContent = "Compare selected TH1";
   const imageFormat = formatInput.value;
   try {
@@ -570,13 +605,50 @@ async function compareSelected() {
   }
 }
 
+async function previewPanel() {
+  if (!currentFileId || comparePaths.size < 1) return;
+
+  saveSettingsFromForm();
+  compareMode = false;
+  panelMode = true;
+  selectedName.textContent = "Panel preview";
+  const imageFormat = formatInput.value;
+  try {
+    const blob = await fetchPanelImage("png");
+    setPlotBlob(blob);
+    const downloadBlob = await fetchPanelImage(imageFormat);
+    setDownloadBlob(downloadBlob, `panel.${imageFormat}`);
+    refreshSummary();
+  } catch (error) {
+    statusBox.textContent = error.message;
+  }
+}
+
+async function fetchPanelImage(imageFormat) {
+  const response = await fetch(`/api/files/${currentFileId}/panel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      format: imageFormat,
+      paths: Array.from(comparePaths),
+      columns: panelColumnsInput.value,
+      settings: formSettings(),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response));
+  }
+  return await response.blob();
+}
+
 async function fetchCompareImage(imageFormat) {
   const response = await fetch(`/api/files/${currentFileId}/compare`, {
     method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         format: imageFormat,
-        paths: Array.from(comparePaths),
+        paths,
+        labels: compareLabels(paths),
         settings: formSettings(),
       }),
   });
@@ -584,6 +656,24 @@ async function fetchCompareImage(imageFormat) {
     throw new Error(await errorMessage(response));
   }
   return await response.blob();
+}
+
+function compareLabels(paths) {
+  const labels = compareLabelsInput.value.split(/\r?\n/).map((label) => label.trim());
+  return paths.map((path, index) => labels[index] || path);
+}
+
+async function exportPanel() {
+  if (!currentFileId || comparePaths.size < 1) return;
+
+  panelButton.disabled = true;
+  panelButton.textContent = "Exporting...";
+  try {
+    const imageFormat = formatInput.value;
+    downloadBlob(await fetchPanelImage(imageFormat), `panel.${imageFormat}`);
+  } finally {
+    updateCompareButton();
+  }
 }
 
 function setPlotBlob(blob) {

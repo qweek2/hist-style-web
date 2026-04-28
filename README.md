@@ -94,14 +94,16 @@ Now drag and drop a `.root` file into the page.
 ## Features
 
 - Drag-and-drop `.root` file upload
-- Recursive discovery of `TH1*` and `TH2*` objects
+- Recursive discovery of `TH1*`, `TH2*`, `TProfile*`, and `TGraph*` objects
 - Clean Matplotlib rendering
 - PNG, PDF, and SVG export
 - Batch export to ZIP
 - Per-histogram custom style overrides
 - Save/load style presets as JSON
 - Search/filter histograms by name
-- Compare multiple `TH1` histograms on one plot
+- Compare multiple `TH1`/`TProfile` objects on one plot
+- Edit legend labels for comparison plots
+- Export selected objects as a multi-panel figure
 - Optional error bars
 - Linear/log scale controls for X, Y, and Z/color scale
 - Manual axis ranges for X, Y, and Z
@@ -138,6 +140,8 @@ Currently supported:
 
 - `TH1*`
 - `TH2*`
+- `TProfile*`
+- `TGraph*`
 
 Examples:
 
@@ -145,11 +149,13 @@ Examples:
 - `TH1D`
 - `TH2F`
 - `TH2D`
+- `TProfile`
+- `TGraph`
+- `TGraphErrors`
+- `TGraphAsymmErrors`
 
 Not yet supported:
 
-- `TGraph`
-- `TProfile`
 - `THStack`
 - `TEfficiency`
 - saved `TCanvas` styling

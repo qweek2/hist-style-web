@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from plotting import PlotOptions, render_compare_th1, render_histogram
+from plotting import PlotOptions, plot_kind, render_compare_th1, render_histogram, render_panel
 from root_reader import get_histogram, histogram_summary, list_histograms
 
 
@@ -195,22 +195,46 @@ def compare(file_id: str, payload: dict):
         raise HTTPException(status_code=400, detail="Format must be png, pdf, or svg")
 
     paths = payload.get("paths", [])
+    labels = payload.get("labels", [])
     if len(paths) < 2:
-        raise HTTPException(status_code=400, detail="Select at least two TH1 histograms")
+        raise HTTPException(status_code=400, detail="Select at least two TH1/TProfile objects")
 
     try:
         options = options_from_settings(payload.get("settings", {}))
         histograms = []
-        for path in paths:
+        for index, path in enumerate(paths):
             hist = get_histogram(root_path, path)
-            if not hist.classname.startswith("TH1"):
-                raise HTTPException(status_code=400, detail="Compare supports TH1 only")
-            histograms.append((path, hist))
+            if plot_kind(hist) not in {"TH1", "TProfile"}:
+                raise HTTPException(status_code=400, detail="Compare supports TH1 and TProfile only")
+            label = labels[index] if index < len(labels) and labels[index] else path
+            histograms.append((label, hist))
         if options.include_summary:
             options.summary_text = f"Compared: {len(histograms)} histograms"
         image = render_compare_th1(histograms, options, image_format)
     except HTTPException:
         raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(content=image, media_type=media_type(image_format))
+
+
+@app.post("/api/files/{file_id}/panel")
+def panel(file_id: str, payload: dict):
+    root_path = file_path(file_id)
+    image_format = payload.get("format", "png")
+    if image_format not in {"png", "pdf", "svg"}:
+        raise HTTPException(status_code=400, detail="Format must be png, pdf, or svg")
+
+    paths = payload.get("paths", [])
+    if not paths:
+        raise HTTPException(status_code=400, detail="Select at least one object")
+
+    try:
+        options = options_from_settings(payload.get("settings", {}))
+        columns = int(payload.get("columns", 2))
+        objects = [(path, get_histogram(root_path, path)) for path in paths]
+        image = render_panel(objects, options, image_format, columns=columns)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -307,6 +331,12 @@ def safe_name(value: str) -> str:
 
 def summary_line(root_path: Path, hist_path: str) -> str:
     summary = histogram_summary(root_path, hist_path)
+    if summary["kind"] == "TGraph":
+        return (
+            f"Points: {summary['points']} | "
+            f"Mean X/Y: {format_number(summary['meanX'])} / {format_number(summary['meanY'])} | "
+            f"RMS X/Y: {format_number(summary['rmsX'])} / {format_number(summary['rmsY'])}"
+        )
     if summary["kind"] == "TH2":
         return (
             f"Entries: {format_number(summary['entries'])} | "

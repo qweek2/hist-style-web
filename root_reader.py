@@ -4,7 +4,7 @@ import numpy as np
 import uproot
 
 
-SUPPORTED_KINDS = ("TH1", "TH2")
+SUPPORTED_KINDS = ("TH1", "TH2", "TProfile", "TGraph")
 
 
 def list_histograms(root_path: Path) -> list[dict]:
@@ -36,8 +36,11 @@ def get_histogram(root_path: Path, hist_path: str):
 
 def histogram_summary(root_path: Path, hist_path: str) -> dict:
     hist = get_histogram(root_path, hist_path)
-    if hist.classname.startswith("TH2"):
+    kind = histogram_kind(hist.classname)
+    if kind == "TH2":
         return th2_summary(hist)
+    if kind == "TGraph":
+        return tgraph_summary(hist)
     return th1_summary(hist)
 
 
@@ -78,6 +81,40 @@ def th2_summary(hist) -> dict:
     }
 
 
+def tgraph_summary(graph) -> dict:
+    x_values, y_values, _, _ = graph_arrays(graph)
+    return {
+        "kind": "TGraph",
+        "points": int(len(x_values)),
+        "meanX": float(np.mean(x_values)) if len(x_values) else 0.0,
+        "meanY": float(np.mean(y_values)) if len(y_values) else 0.0,
+        "rmsX": float(np.std(x_values)) if len(x_values) else 0.0,
+        "rmsY": float(np.std(y_values)) if len(y_values) else 0.0,
+    }
+
+
+def graph_arrays(graph):
+    n_points = int(member_float(graph, "fN"))
+    x_values = np.asarray(graph.member("fX"), dtype=float)[:n_points]
+    y_values = np.asarray(graph.member("fY"), dtype=float)[:n_points]
+    x_errors = graph_error_array(graph, "fEX", "fEXlow", "fEXhigh", n_points)
+    y_errors = graph_error_array(graph, "fEY", "fEYlow", "fEYhigh", n_points)
+    return x_values, y_values, x_errors, y_errors
+
+
+def graph_error_array(graph, symmetric_name: str, low_name: str, high_name: str, n_points: int):
+    try:
+        return np.asarray(graph.member(symmetric_name), dtype=float)[:n_points]
+    except Exception:
+        pass
+    try:
+        low = np.asarray(graph.member(low_name), dtype=float)[:n_points]
+        high = np.asarray(graph.member(high_name), dtype=float)[:n_points]
+        return np.vstack([low, high])
+    except Exception:
+        return None
+
+
 def weighted_mean(centers, weights) -> float:
     total = float(np.sum(weights))
     if total == 0:
@@ -101,10 +138,14 @@ def member_float(obj, name: str) -> float:
 
 
 def histogram_kind(class_name: str) -> str | None:
+    if class_name.startswith("TProfile"):
+        return "TProfile"
     if class_name.startswith("TH2"):
         return "TH2"
     if class_name.startswith("TH1"):
         return "TH1"
+    if class_name.startswith("TGraph"):
+        return "TGraph"
     return None
 
 

@@ -49,7 +49,7 @@ class PlotOptions:
 def render_histogram(hist, options: PlotOptions | None = None, image_format: str = "png") -> bytes:
     options = options or PlotOptions()
     image_format = normalize_image_format(image_format)
-    kind = "TH2" if hist.classname.startswith("TH2") else "TH1"
+    kind = plot_kind(hist)
 
     plt.style.use("default")
     fig_width, fig_height = figure_size(options.aspect_ratio)
@@ -58,10 +58,7 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
         fig.patch.set_facecolor(options.figure_facecolor)
         ax.set_facecolor(options.axes_facecolor)
 
-        if kind == "TH2":
-            draw_th2(ax, hist, options)
-        else:
-            draw_th1(ax, hist, options)
+        draw_object(ax, hist, options, kind)
 
         apply_ranges_and_scale(ax, options)
         style_axes(ax, options)
@@ -82,6 +79,29 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
 
 def render_histogram_png(hist, options: PlotOptions | None = None) -> bytes:
     return render_histogram(hist, options, "png")
+
+
+def plot_kind(obj) -> str:
+    class_name = obj.classname
+    if class_name.startswith("TProfile"):
+        return "TProfile"
+    if class_name.startswith("TH2"):
+        return "TH2"
+    if class_name.startswith("TGraph"):
+        return "TGraph"
+    return "TH1"
+
+
+def draw_object(ax, obj, options: PlotOptions, kind: str | None = None) -> None:
+    kind = kind or plot_kind(obj)
+    if kind == "TH2":
+        draw_th2(ax, obj, options)
+    elif kind == "TGraph":
+        draw_tgraph(ax, obj, options)
+    elif kind == "TProfile":
+        draw_tprofile(ax, obj, options)
+    else:
+        draw_th1(ax, obj, options)
 
 
 def draw_th1(ax, hist, options: PlotOptions) -> None:
@@ -129,6 +149,45 @@ def draw_th1(ax, hist, options: PlotOptions) -> None:
         )
 
 
+def draw_tprofile(ax, hist, options: PlotOptions) -> None:
+    values, edges = hist.to_numpy()
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    errors = profile_errors(hist, values)
+
+    ax.step(
+        edges[:-1],
+        values,
+        where="post",
+        color=options.line_color,
+        linewidth=options.line_width,
+    )
+    if options.show_errors:
+        ax.errorbar(
+            centers,
+            values,
+            yerr=errors,
+            fmt="none",
+            ecolor=options.line_color,
+            elinewidth=max(0.8, options.line_width * 0.55),
+            capsize=1.8,
+            alpha=0.9,
+        )
+
+    if options.x_min is None and options.x_max is None:
+        ax.set_xlim(edges[0], edges[-1])
+    apply_labels(ax, hist, options, default_y_label="Profile")
+
+
+def profile_errors(hist, values):
+    try:
+        errors = np.asarray(hist.errors(), dtype=float)
+        if errors.shape == values.shape:
+            return errors
+    except Exception:
+        pass
+    return np.zeros_like(values, dtype=float)
+
+
 def draw_th2(ax, hist, options: PlotOptions) -> None:
     values, x_edges, y_edges = hist.to_numpy()
     masked = np.ma.masked_where(values.T <= 0, values.T)
@@ -154,6 +213,53 @@ def draw_th2(ax, hist, options: PlotOptions) -> None:
     apply_labels(ax, hist, options, default_y_label="y")
 
 
+def draw_tgraph(ax, graph, options: PlotOptions) -> None:
+    x_values, y_values, x_errors, y_errors = graph_arrays(graph)
+    ax.plot(
+        x_values,
+        y_values,
+        color=options.line_color,
+        linewidth=options.line_width,
+        marker="o",
+        markersize=max(3, options.line_width * 2),
+    )
+    if options.show_errors and (x_errors is not None or y_errors is not None):
+        ax.errorbar(
+            x_values,
+            y_values,
+            xerr=x_errors,
+            yerr=y_errors,
+            fmt="none",
+            ecolor=options.line_color,
+            elinewidth=max(0.8, options.line_width * 0.55),
+            capsize=1.8,
+            alpha=0.85,
+        )
+    apply_labels(ax, graph, options, default_y_label="y")
+
+
+def graph_arrays(graph):
+    n_points = int(member_float(graph, "fN"))
+    x_values = np.asarray(graph.member("fX"), dtype=float)[:n_points]
+    y_values = np.asarray(graph.member("fY"), dtype=float)[:n_points]
+    x_errors = graph_error_array(graph, "fEX", "fEXlow", "fEXhigh", n_points)
+    y_errors = graph_error_array(graph, "fEY", "fEYlow", "fEYhigh", n_points)
+    return x_values, y_values, x_errors, y_errors
+
+
+def graph_error_array(graph, symmetric_name: str, low_name: str, high_name: str, n_points: int):
+    try:
+        return np.asarray(graph.member(symmetric_name), dtype=float)[:n_points]
+    except Exception:
+        pass
+    try:
+        low = np.asarray(graph.member(low_name), dtype=float)[:n_points]
+        high = np.asarray(graph.member(high_name), dtype=float)[:n_points]
+        return np.vstack([low, high])
+    except Exception:
+        return None
+
+
 def render_compare_th1(
     histograms: list[tuple[str, object]],
     options: PlotOptions | None = None,
@@ -173,8 +279,9 @@ def render_compare_th1(
         for index, (label, hist) in enumerate(histograms):
             values, edges = hist.to_numpy()
             widths = np.diff(edges)
-            errors = np.sqrt(np.clip(values, 0, None))
-            values, errors = normalize_th1(values, errors, widths, options.normalization)
+            errors = profile_errors(hist, values) if plot_kind(hist) == "TProfile" else np.sqrt(np.clip(values, 0, None))
+            if plot_kind(hist) != "TProfile":
+                values, errors = normalize_th1(values, errors, widths, options.normalization)
             color = options.line_color if len(histograms) == 1 else colors[index % len(colors)]
             ax.step(
                 edges[:-1],
@@ -209,6 +316,47 @@ def render_compare_th1(
         fig.tight_layout()
         if options.include_summary and options.summary_text:
             fig.subplots_adjust(bottom=0.16)
+        buffer = BytesIO()
+        fig.savefig(
+            buffer,
+            format=image_format,
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor(),
+        )
+        plt.close(fig)
+    return buffer.getvalue()
+
+
+def render_panel(
+    objects: list[tuple[str, object]],
+    options: PlotOptions | None = None,
+    image_format: str = "png",
+    columns: int = 2,
+) -> bytes:
+    options = options or PlotOptions()
+    image_format = normalize_image_format(image_format)
+    columns = max(1, min(columns, 4))
+    rows = int(np.ceil(len(objects) / columns))
+    single_width, single_height = figure_size(options.aspect_ratio)
+    fig_width = single_width * columns
+    fig_height = single_height * rows
+
+    with style_context(options):
+        fig, axes = plt.subplots(rows, columns, figsize=(fig_width, fig_height), dpi=options.dpi)
+        fig.patch.set_facecolor(options.figure_facecolor)
+        axes_array = np.asarray(axes).reshape(-1)
+
+        for ax, (path, obj) in zip(axes_array, objects):
+            ax.set_facecolor(options.axes_facecolor)
+            panel_options = PlotOptions(**{**options.__dict__, "title": path})
+            draw_object(ax, obj, panel_options)
+            apply_ranges_and_scale(ax, panel_options)
+            style_axes(ax, panel_options)
+
+        for ax in axes_array[len(objects):]:
+            ax.axis("off")
+
+        fig.tight_layout()
         buffer = BytesIO()
         fig.savefig(
             buffer,
@@ -394,6 +542,13 @@ def member_text(obj, name: str) -> str:
     except Exception:
         return ""
     return str(value or "")
+
+
+def member_float(obj, name: str) -> float:
+    try:
+        return float(obj.member(name))
+    except Exception:
+        return 0.0
 
 
 ROOT_SYMBOLS = {
