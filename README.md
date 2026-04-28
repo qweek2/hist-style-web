@@ -3,8 +3,9 @@
 Histogram Style Web is a small local-first web application for turning CERN ROOT
 histograms into cleaner, publication-ready plots rendered with Matplotlib.
 
-It reads `.root` files with `uproot`, detects `TH1*` and `TH2*` histograms, and
-lets you preview, restyle, compare, and export them from a browser.
+It reads `.root` files with `uproot`, detects common histogram and graph
+objects, and lets you preview, restyle, compare, fit, arrange, and export them
+from a browser.
 
 The app is designed for physicists and analysts who often need the same ROOT
 histograms in slides, notes, papers, and reports, but do not want to keep
@@ -87,7 +88,7 @@ Now drag and drop a `.root` file into the page.
 
 1. Drop a ROOT file into the upload area.
 2. Select a histogram from the list.
-3. Adjust style settings in the right panel.
+3. Adjust style settings in the middle settings panel.
 4. Export the current plot as PNG, PDF, or SVG.
 5. Use `Export all` to download all histograms as a ZIP archive.
 
@@ -101,15 +102,40 @@ Now drag and drop a `.root` file into the page.
 - Per-histogram custom style overrides
 - Save/load style presets as JSON
 - Search/filter histograms by name
+- Object information panel with ROOT class, title, entries, ranges, bins, or points
 - Compare multiple `TH1`/`TProfile` objects on one plot
+- Advanced comparison modes:
+  - overlay
+  - ratio to the first selected object
+  - difference from the first selected object
+  - relative difference in percent
 - Edit legend labels for comparison plots
-- Export selected objects as a multi-panel figure
+- Per-curve compare styling:
+  - automatic or custom color
+  - line style
+  - marker
+  - alpha/transparency
+- Optional uncertainty band for the reference curve
+- Preview and export selected objects as a multi-panel figure
+- Multi-panel controls:
+  - number of columns
+  - shared X/Y axes
+  - equal ranges
+  - panel titles
+  - global panel title
+  - subplot spacing
 - Optional error bars
 - Linear/log scale controls for X, Y, and Z/color scale
 - Manual axis ranges for X, Y, and Z
 - Aspect ratio control, for example `1:1`, `4:3`, `16:9`
 - Summary line with entries, integral, mean, and RMS
 - Optional summary embedded into exported images
+- Optional fit overlay for 1D objects
+- Independent fit range controls for X
+- Fit models:
+  - Gaussian
+  - exponential
+  - pol0, pol1, pol2, pol3, pol4, pol5, pol6
 - TH1 normalization modes:
   - raw
   - area = 1
@@ -159,6 +185,43 @@ Not yet supported:
 - `THStack`
 - `TEfficiency`
 - saved `TCanvas` styling
+
+## Compare Mode
+
+Select two or more `TH1*` or `TProfile*` objects using the checkboxes in the
+object list, then click `Compare selected`.
+
+The first selected object is used as the reference for ratio and difference
+plots. Ratio and difference modes require identical binning.
+
+Comparison plots support:
+
+- custom legend labels
+- per-curve colors
+- solid/dashed/dash-dot/dotted line styles
+- optional markers
+- alpha/transparency
+- optional uncertainty band for the reference curve
+
+If no per-curve color is selected, the app uses Matplotlib's automatic color
+cycle. By default, compare curves use solid lines, no markers, and alpha 1.
+
+## Fit Mode
+
+Enable `Show fit` in the `Fit` section for a selected 1D object.
+
+Available models:
+
+- Gaussian
+- exponential
+- polynomial fits from `pol0` to `pol6`
+
+`Fit X min` and `Fit X max` restrict the fit range without changing the visible
+plot range. Leave them empty to fit the full histogram range.
+
+The current fit implementation is a lightweight NumPy-based visual fit intended
+for quick presentation and inspection plots. It is not a replacement for a full
+statistical ROOT/Minuit fit with parameter errors and fit-quality diagnostics.
 
 ## Local Privacy Notes
 

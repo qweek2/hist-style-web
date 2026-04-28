@@ -366,7 +366,7 @@ h1 {
 
 .legend-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) auto auto auto 48px auto;
   gap: 6px;
   align-items: center;
 }
@@ -378,8 +378,11 @@ h1 {
   color: #4d5b6d;
 }
 
-.legend-row input[type="text"] {
+.legend-row input[type="text"],
+.legend-row select,
+.legend-row input[type="number"] {
   width: 100%;
+  min-width: 0;
 }
 
 .legend-row input[type="color"] {

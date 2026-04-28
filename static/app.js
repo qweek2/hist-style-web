@@ -19,10 +19,19 @@ const dpiInput = document.querySelector("#dpiInput");
 const aspectRatioInput = document.querySelector("#aspectRatioInput");
 const lineWidthInput = document.querySelector("#lineWidthInput");
 const lineColorInput = document.querySelector("#lineColorInput");
+const lineStyleInput = document.querySelector("#lineStyleInput");
+const markerStyleInput = document.querySelector("#markerStyleInput");
+const lineAlphaInput = document.querySelector("#lineAlphaInput");
 const colormapInput = document.querySelector("#colormapInput");
 const normalizationInput = document.querySelector("#normalizationInput");
 const showErrorsInput = document.querySelector("#showErrorsInput");
 const showLegendInput = document.querySelector("#showLegendInput");
+const uncertaintyBandInput = document.querySelector("#uncertaintyBandInput");
+const compareModeInput = document.querySelector("#compareModeInput");
+const fitEnabledInput = document.querySelector("#fitEnabledInput");
+const fitModelInput = document.querySelector("#fitModelInput");
+const fitXMinInput = document.querySelector("#fitXMinInput");
+const fitXMaxInput = document.querySelector("#fitXMaxInput");
 const customInput = document.querySelector("#customInput");
 const titleInput = document.querySelector("#titleInput");
 const xLabelInput = document.querySelector("#xLabelInput");
@@ -69,10 +78,19 @@ const globalSettings = {
   zScale: "linear",
   lineWidth: "2",
   lineColor: "#1f77b4",
+  lineStyle: "solid",
+  markerStyle: "none",
+  lineAlpha: "1",
   colormap: "white-blue",
   normalization: "raw",
   showErrors: true,
   showLegend: true,
+  uncertaintyBand: false,
+  compareMode: "overlay",
+  fitEnabled: false,
+  fitModel: "gaussian",
+  fitXMin: "",
+  fitXMax: "",
   title: "",
   xLabel: "",
   yLabel: "",
@@ -103,6 +121,9 @@ const PRESETS = {
     aspectRatio: "16:10",
     lineWidth: "1.5",
     lineColor: "#111827",
+    lineStyle: "solid",
+    markerStyle: "none",
+    lineAlpha: "1",
     colormap: "white-blue",
     titleFontSize: "11",
     labelFontSize: "9",
@@ -121,6 +142,9 @@ const PRESETS = {
     aspectRatio: "16:9",
     lineWidth: "3",
     lineColor: "#2563eb",
+    lineStyle: "solid",
+    markerStyle: "none",
+    lineAlpha: "1",
     colormap: "viridis",
     titleFontSize: "22",
     labelFontSize: "17",
@@ -139,6 +163,9 @@ const PRESETS = {
     aspectRatio: "4:3",
     lineWidth: "2",
     lineColor: "#000000",
+    lineStyle: "solid",
+    markerStyle: "none",
+    lineAlpha: "1",
     colormap: "white-blue",
     titleFontSize: "13",
     labelFontSize: "12",
@@ -157,6 +184,9 @@ const PRESETS = {
     aspectRatio: "16:10",
     lineWidth: "1.2",
     lineColor: "#000000",
+    lineStyle: "solid",
+    markerStyle: "none",
+    lineAlpha: "1",
     colormap: "viridis",
     titleFontSize: "7",
     labelFontSize: "7",
@@ -175,6 +205,9 @@ const PRESETS = {
     aspectRatio: "16:9",
     lineWidth: "3",
     lineColor: "#60a5fa",
+    lineStyle: "solid",
+    markerStyle: "none",
+    lineAlpha: "1",
     colormap: "magma",
     titleFontSize: "22",
     labelFontSize: "17",
@@ -193,7 +226,7 @@ fileInput.addEventListener("change", () => {
   if (fileInput.files.length) uploadFile(fileInput.files[0]);
 });
 
-[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, titleInput, xLabelInput, yLabelInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
+[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, lineStyleInput, markerStyleInput, lineAlphaInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, uncertaintyBandInput, compareModeInput, fitEnabledInput, fitModelInput, fitXMinInput, fitXMaxInput, titleInput, xLabelInput, yLabelInput, compareLabelsInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
   input.addEventListener("input", () => {
     saveSettingsFromForm();
     refreshPlotSoon();
@@ -506,10 +539,18 @@ function plotUrl(hist, imageFormat = "png") {
   params.set("z_scale", settings.zScale);
   params.set("line_width", settings.lineWidth);
   params.set("line_color", settings.lineColor);
+  params.set("line_style", settings.lineStyle);
+  params.set("marker_style", settings.markerStyle);
+  params.set("line_alpha", numberSetting(settings.lineAlpha, "1"));
   params.set("colormap", settings.colormap);
   params.set("normalization", settings.normalization);
   params.set("show_errors", settings.showErrors ? "true" : "false");
   params.set("show_legend", settings.showLegend ? "true" : "false");
+  params.set("uncertainty_band", settings.uncertaintyBand ? "true" : "false");
+  params.set("fit_enabled", settings.fitEnabled ? "true" : "false");
+  params.set("fit_model", settings.fitModel);
+  addNumberParam(params, "fit_x_min", settings.fitXMin);
+  addNumberParam(params, "fit_x_max", settings.fitXMax);
   params.set("include_summary", settings.includeSummary ? "true" : "false");
   params.set("font_family", settings.fontFamily);
   params.set("figure_facecolor", settings.figureFacecolor);
@@ -549,6 +590,10 @@ function integerSetting(value, fallback) {
   return Number.isInteger(Number(value)) && value !== "" ? value : fallback;
 }
 
+function numberSetting(value, fallback) {
+  return Number.isFinite(Number(value)) && value !== "" ? value : fallback;
+}
+
 function effectiveSettings(hist) {
   return histSettings.get(hist.path) || globalSettings;
 }
@@ -573,10 +618,19 @@ function saveSettingsFromForm() {
   target.zScale = scaleValue("z");
   target.lineWidth = lineWidthInput.value;
   target.lineColor = lineColorInput.value;
+  target.lineStyle = lineStyleInput.value;
+  target.markerStyle = markerStyleInput.value;
+  target.lineAlpha = lineAlphaInput.value;
   target.colormap = colormapInput.value;
   target.normalization = normalizationInput.value;
   target.showErrors = showErrorsInput.checked;
   target.showLegend = showLegendInput.checked;
+  target.uncertaintyBand = uncertaintyBandInput.checked;
+  target.compareMode = compareModeInput.value;
+  target.fitEnabled = fitEnabledInput.checked;
+  target.fitModel = fitModelInput.value;
+  target.fitXMin = fitXMinInput.value;
+  target.fitXMax = fitXMaxInput.value;
   target.title = titleInput.value;
   target.xLabel = xLabelInput.value;
   target.yLabel = yLabelInput.value;
@@ -603,10 +657,19 @@ function loadSettingsToForm() {
   setScaleControl("z", settings.zScale);
   lineWidthInput.value = settings.lineWidth;
   lineColorInput.value = settings.lineColor;
+  lineStyleInput.value = settings.lineStyle || "solid";
+  markerStyleInput.value = settings.markerStyle || "none";
+  lineAlphaInput.value = settings.lineAlpha || "1";
   colormapInput.value = settings.colormap;
   normalizationInput.value = settings.normalization;
   showErrorsInput.checked = settings.showErrors;
   showLegendInput.checked = settings.showLegend;
+  uncertaintyBandInput.checked = Boolean(settings.uncertaintyBand);
+  compareModeInput.value = settings.compareMode || "overlay";
+  fitEnabledInput.checked = Boolean(settings.fitEnabled);
+  fitModelInput.value = settings.fitModel || "gaussian";
+  fitXMinInput.value = settings.fitXMin || "";
+  fitXMaxInput.value = settings.fitXMax || "";
   titleInput.value = settings.title;
   xLabelInput.value = settings.xLabel;
   yLabelInput.value = settings.yLabel;
@@ -700,6 +763,9 @@ async function fetchCompareImage(imageFormat, paths) {
       paths,
       labels: compareLabels(paths),
       colors: compareColors(paths),
+      styles: compareStyles(paths),
+      markers: compareMarkers(paths),
+      alphas: compareAlphas(paths),
       settings: formSettings(),
     }),
   });
@@ -721,6 +787,18 @@ function compareColors(paths) {
   return paths.map((path) => legendSettings.get(path)?.color || "");
 }
 
+function compareStyles(paths) {
+  return paths.map((path) => legendSettings.get(path)?.style || "");
+}
+
+function compareMarkers(paths) {
+  return paths.map((path) => legendSettings.get(path)?.marker || "");
+}
+
+function compareAlphas(paths) {
+  return paths.map((path) => legendSettings.get(path)?.alpha || "");
+}
+
 function renderLegendEditor() {
   const paths = selectedComparePaths();
   legendEditor.innerHTML = "";
@@ -731,19 +809,36 @@ function renderLegendEditor() {
 
   for (const path of paths) {
     if (!legendSettings.has(path)) {
-      legendSettings.set(path, { label: path, color: "" });
+      legendSettings.set(path, { label: "", color: "", style: "solid", marker: "none", alpha: "1" });
     }
     const settings = legendSettings.get(path);
     const row = document.createElement("div");
     row.className = "legend-row";
     row.innerHTML = `
       <span title="${escapeHtml(path)}">${escapeHtml(path)}</span>
-      <input type="text" value="${escapeHtml(settings.label)}" />
+      <input type="text" value="${escapeHtml(settings.label)}" placeholder="${escapeHtml(path)}" />
       <input type="color" value="${settings.color || "#0072B2"}" />
+      <select>
+        <option value="solid" ${settings.style === "solid" ? "selected" : ""}>solid</option>
+        <option value="dashed" ${settings.style === "dashed" ? "selected" : ""}>dash</option>
+        <option value="dashdot" ${settings.style === "dashdot" ? "selected" : ""}>dashdot</option>
+        <option value="dotted" ${settings.style === "dotted" ? "selected" : ""}>dot</option>
+      </select>
+      <select>
+        <option value="none" ${settings.marker === "none" ? "selected" : ""}>none</option>
+        <option value="circle" ${settings.marker === "circle" ? "selected" : ""}>circle</option>
+        <option value="square" ${settings.marker === "square" ? "selected" : ""}>square</option>
+        <option value="triangle" ${settings.marker === "triangle" ? "selected" : ""}>tri</option>
+        <option value="diamond" ${settings.marker === "diamond" ? "selected" : ""}>dia</option>
+      </select>
+      <input type="number" min="0.05" max="1" step="0.05" value="${settings.alpha || ""}" placeholder="alpha" />
       <button type="button" title="Use auto color">Auto</button>
     `;
     const labelInput = row.querySelector('input[type="text"]');
     const colorInput = row.querySelector('input[type="color"]');
+    const styleInput = row.querySelectorAll("select")[0];
+    const markerInput = row.querySelectorAll("select")[1];
+    const alphaInput = row.querySelector('input[type="number"]');
     const autoButton = row.querySelector("button");
     labelInput.addEventListener("input", () => {
       settings.label = labelInput.value;
@@ -753,9 +848,27 @@ function renderLegendEditor() {
       settings.color = colorInput.value;
       if (compareMode) refreshPlotSoon();
     });
+    styleInput.addEventListener("change", () => {
+      settings.style = styleInput.value;
+      if (compareMode) refreshPlotSoon();
+    });
+    markerInput.addEventListener("change", () => {
+      settings.marker = markerInput.value;
+      if (compareMode) refreshPlotSoon();
+    });
+    alphaInput.addEventListener("input", () => {
+      settings.alpha = alphaInput.value;
+      if (compareMode) refreshPlotSoon();
+    });
     autoButton.addEventListener("click", () => {
       settings.color = "";
+      settings.style = "solid";
+      settings.marker = "none";
+      settings.alpha = "1";
       colorInput.value = "#0072B2";
+      styleInput.value = "solid";
+      markerInput.value = "none";
+      alphaInput.value = "1";
       if (compareMode) refreshPlotSoon();
     });
     legendEditor.appendChild(row);
@@ -802,10 +915,19 @@ function formSettings() {
     zScale: scaleValue("z"),
     lineWidth: lineWidthInput.value,
     lineColor: lineColorInput.value,
+    lineStyle: lineStyleInput.value,
+    markerStyle: markerStyleInput.value,
+    lineAlpha: lineAlphaInput.value,
     colormap: colormapInput.value,
     normalization: normalizationInput.value,
     showErrors: showErrorsInput.checked,
     showLegend: showLegendInput.checked,
+    uncertaintyBand: uncertaintyBandInput.checked,
+    compareMode: compareModeInput.value,
+    fitEnabled: fitEnabledInput.checked,
+    fitModel: fitModelInput.value,
+    fitXMin: fitXMinInput.value,
+    fitXMax: fitXMaxInput.value,
     title: titleInput.value,
     xLabel: xLabelInput.value,
     yLabel: yLabelInput.value,

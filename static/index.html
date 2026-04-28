@@ -109,6 +109,29 @@
                 <option value="bin_width">bin width</option>
               </select>
             </label>
+            <label>
+              <span>Line style</span>
+              <select id="lineStyleInput">
+                <option value="solid" selected>solid</option>
+                <option value="dashed">dashed</option>
+                <option value="dashdot">dashdot</option>
+                <option value="dotted">dotted</option>
+              </select>
+            </label>
+            <label>
+              <span>Marker</span>
+              <select id="markerStyleInput">
+                <option value="none" selected>none</option>
+                <option value="circle">circle</option>
+                <option value="square">square</option>
+                <option value="triangle">triangle</option>
+                <option value="diamond">diamond</option>
+              </select>
+            </label>
+            <label>
+              <span>Alpha</span>
+              <input id="lineAlphaInput" type="number" min="0.05" max="1" step="0.05" value="1" />
+            </label>
             <label class="checkbox-label">
               <input id="showErrorsInput" type="checkbox" checked />
               <span>Show errors</span>
@@ -121,6 +144,56 @@
               <input id="customInput" type="checkbox" disabled />
               <span>Custom for selected</span>
             </label>
+            </div>
+          </details>
+          <details>
+            <summary>Compare</summary>
+            <div class="settings-row">
+              <label>
+                <span>Mode</span>
+                <select id="compareModeInput">
+                  <option value="overlay" selected>overlay</option>
+                  <option value="ratio">ratio</option>
+                  <option value="difference">difference</option>
+                  <option value="relative_difference">% difference</option>
+                </select>
+              </label>
+              <label class="checkbox-label">
+                <input id="uncertaintyBandInput" type="checkbox" />
+                <span>Reference band</span>
+              </label>
+              <div id="legendEditor" class="legend-editor"></div>
+            </div>
+          </details>
+          <details>
+            <summary>Fit</summary>
+            <div class="settings-row">
+              <label class="checkbox-label">
+                <input id="fitEnabledInput" type="checkbox" />
+                <span>Show fit</span>
+              </label>
+              <label>
+                <span>Fit model</span>
+                <select id="fitModelInput">
+                  <option value="gaussian" selected>Gaussian</option>
+                  <option value="exponential">Exponential</option>
+                  <option value="pol0">pol0 constant</option>
+                  <option value="pol1">pol1 linear</option>
+                  <option value="pol2">pol2 quadratic</option>
+                  <option value="pol3">pol3 cubic</option>
+                  <option value="pol4">pol4</option>
+                  <option value="pol5">pol5</option>
+                  <option value="pol6">pol6</option>
+                </select>
+              </label>
+              <label>
+                <span>Fit X min</span>
+                <input id="fitXMinInput" type="number" step="any" placeholder="auto" />
+              </label>
+              <label>
+                <span>Fit X max</span>
+                <input id="fitXMaxInput" type="number" step="any" placeholder="auto" />
+              </label>
             </div>
           </details>
           <details>
@@ -181,7 +254,6 @@
               <span>Compare legend labels</span>
               <textarea id="compareLabelsInput" rows="2" placeholder="One label per selected curve"></textarea>
             </label>
-            <div id="legendEditor" class="legend-editor"></div>
             </div>
           </details>
           <details>

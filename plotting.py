@@ -32,6 +32,15 @@ class PlotOptions:
     tick_direction: str = "out"
     line_width: float = 2.0
     line_color: str = "#1f77b4"
+    line_style: str = "solid"
+    marker_style: str = "none"
+    line_alpha: float = 1.0
+    compare_mode: str = "overlay"
+    uncertainty_band: bool = False
+    fit_enabled: bool = False
+    fit_model: str = "gaussian"
+    fit_x_min: float | None = None
+    fit_x_max: float | None = None
     title: str | None = None
     x_label: str | None = None
     y_label: str | None = None
@@ -117,7 +126,10 @@ def draw_th1(ax, hist, options: PlotOptions) -> None:
         where="post",
         color=options.line_color,
         linewidth=options.line_width,
+        linestyle=matplotlib_line_style(options.line_style),
+        alpha=options.line_alpha,
     )
+    draw_markers(ax, centers, values, options, options.line_color)
     if options.show_errors:
         ax.errorbar(
             centers,
@@ -129,6 +141,8 @@ def draw_th1(ax, hist, options: PlotOptions) -> None:
             capsize=1.8,
             alpha=0.9,
         )
+    if options.fit_enabled:
+        draw_fit(ax, centers, values, options)
 
     if options.x_min is None and options.x_max is None:
         ax.set_xlim(edges[0], edges[-1])
@@ -160,7 +174,10 @@ def draw_tprofile(ax, hist, options: PlotOptions) -> None:
         where="post",
         color=options.line_color,
         linewidth=options.line_width,
+        linestyle=matplotlib_line_style(options.line_style),
+        alpha=options.line_alpha,
     )
+    draw_markers(ax, centers, values, options, options.line_color)
     if options.show_errors:
         ax.errorbar(
             centers,
@@ -220,8 +237,10 @@ def draw_tgraph(ax, graph, options: PlotOptions) -> None:
         y_values,
         color=options.line_color,
         linewidth=options.line_width,
-        marker="o",
+        linestyle=matplotlib_line_style(options.line_style),
+        marker=matplotlib_marker(options.marker_style),
         markersize=max(3, options.line_width * 2),
+        alpha=options.line_alpha,
     )
     if options.show_errors and (x_errors is not None or y_errors is not None):
         ax.errorbar(
@@ -271,29 +290,60 @@ def render_compare_th1(
     plt.style.use("default")
     fig_width, fig_height = figure_size(options.aspect_ratio)
     with style_context(options):
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+        if options.compare_mode == "overlay":
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+            ratio_ax = None
+        else:
+            fig, (ax, ratio_ax) = plt.subplots(
+                2,
+                1,
+                figsize=(fig_width, fig_height),
+                dpi=options.dpi,
+                sharex=True,
+                gridspec_kw={"height_ratios": [3, 1], "hspace": 0.08},
+            )
         fig.patch.set_facecolor(options.figure_facecolor)
         ax.set_facecolor(options.axes_facecolor)
+        if ratio_ax is not None:
+            ratio_ax.set_facecolor(options.axes_facecolor)
 
         colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-        for index, item in enumerate(histograms):
-            label, hist, custom_color = compare_item(item)
-            values, edges = hist.to_numpy()
-            widths = np.diff(edges)
-            errors = profile_errors(hist, values) if plot_kind(hist) == "TProfile" else np.sqrt(np.clip(values, 0, None))
-            if plot_kind(hist) != "TProfile":
-                values, errors = normalize_th1(values, errors, widths, options.normalization)
-            color = custom_color or (options.line_color if len(histograms) == 1 else colors[index % len(colors)])
+        prepared = [prepared_compare_item(item, index, colors, options) for index, item in enumerate(histograms)]
+        reference = prepared[0]
+        if ratio_ax is not None:
+            validate_compare_bins(prepared)
+
+        for index, item in enumerate(prepared):
+            label = item["label"]
+            values = item["values"]
+            edges = item["edges"]
+            centers = item["centers"]
+            errors = item["errors"]
+            color = item["color"]
+            line_style = item["line_style"]
+            marker = item["marker"]
+            alpha = item["alpha"]
             ax.step(
                 edges[:-1],
                 values,
                 where="post",
                 linewidth=options.line_width,
+                linestyle=matplotlib_line_style(line_style),
                 color=color,
                 label=label,
+                alpha=alpha,
             )
+            if marker and marker != "none":
+                ax.plot(
+                    centers,
+                    values,
+                    linestyle="none",
+                    marker=matplotlib_marker(marker),
+                    markersize=max(3, options.line_width * 1.8),
+                    color=color,
+                    alpha=alpha,
+                )
             if options.show_errors:
-                centers = 0.5 * (edges[:-1] + edges[1:])
                 ax.errorbar(
                     centers,
                     values,
@@ -304,9 +354,64 @@ def render_compare_th1(
                     capsize=1.8,
                     alpha=0.8,
                 )
+            if options.uncertainty_band and index == 0:
+                ax.fill_between(
+                    centers,
+                    values - errors,
+                    values + errors,
+                    step="mid",
+                    color=color,
+                    alpha=0.18,
+                    linewidth=0,
+                    label=f"{label} unc.",
+                )
 
-        apply_labels(ax, histograms[0][1], options, default_y_label="Entries")
-        apply_ranges_and_scale(ax, options)
+            if ratio_ax is not None and index > 0:
+                residual, residual_errors, ylabel, baseline = compare_residual(item, reference, options.compare_mode)
+                ratio_ax.axhline(baseline, color=options.axis_color, linewidth=0.8, alpha=0.7)
+                ratio_ax.step(
+                    edges[:-1],
+                    residual,
+                    where="post",
+                    linewidth=max(1.0, options.line_width * 0.8),
+                    linestyle=matplotlib_line_style(line_style),
+                    color=color,
+                    alpha=alpha,
+                )
+                if marker and marker != "none":
+                    ratio_ax.plot(
+                        centers,
+                        residual,
+                        linestyle="none",
+                        marker=matplotlib_marker(marker),
+                        markersize=max(3, options.line_width * 1.5),
+                        color=color,
+                        alpha=alpha,
+                    )
+                if options.show_errors:
+                    ratio_ax.errorbar(
+                        centers,
+                        residual,
+                        yerr=residual_errors,
+                        fmt="none",
+                        ecolor=color,
+                        elinewidth=max(0.7, options.line_width * 0.45),
+                        capsize=1.4,
+                        alpha=0.75,
+                    )
+                ratio_ax.set_ylabel(ylabel, color=options.text_color, fontsize=options.label_font_size)
+
+        if ratio_ax is not None:
+            style_axes(ratio_ax, options)
+            ratio_ax.tick_params(axis="x", labelbottom=True)
+            apply_ranges_and_scale(ax, options)
+            if options.y_scale == "log":
+                ratio_ax.set_yscale("linear")
+            ax.tick_params(axis="x", labelbottom=False)
+        else:
+            apply_ranges_and_scale(ax, options)
+
+        apply_labels(ax, prepared[0]["hist"], options, default_y_label="Entries")
         style_axes(ax, options)
         if options.show_legend:
             legend = ax.legend(frameon=False, fontsize=options.tick_font_size)
@@ -329,10 +434,63 @@ def render_compare_th1(
 
 
 def compare_item(item):
-    if len(item) == 3:
+    if len(item) == 6:
         return item
+    if len(item) == 3:
+        label, hist, color = item
+        return label, hist, color, None, None, None
     label, hist = item
-    return label, hist, None
+    return label, hist, None, None, None, None
+
+
+def prepared_compare_item(item, index: int, colors: list[str], options: PlotOptions) -> dict:
+    label, hist, custom_color, custom_style, custom_marker, custom_alpha = compare_item(item)
+    values, edges = hist.to_numpy()
+    widths = np.diff(edges)
+    errors = profile_errors(hist, values) if plot_kind(hist) == "TProfile" else np.sqrt(np.clip(values, 0, None))
+    if plot_kind(hist) != "TProfile":
+        values, errors = normalize_th1(values, errors, widths, options.normalization)
+    return {
+        "label": label,
+        "hist": hist,
+        "values": values,
+        "edges": edges,
+        "centers": 0.5 * (edges[:-1] + edges[1:]),
+        "errors": errors,
+        "color": custom_color or colors[index % len(colors)],
+        "line_style": custom_style or options.line_style,
+        "marker": custom_marker or options.marker_style,
+        "alpha": float(custom_alpha) if custom_alpha is not None else options.line_alpha,
+    }
+
+
+def validate_compare_bins(items: list[dict]) -> None:
+    reference_edges = items[0]["edges"]
+    for item in items[1:]:
+        if len(item["edges"]) != len(reference_edges) or not np.allclose(item["edges"], reference_edges):
+            raise ValueError("Ratio/difference compare requires identical binning")
+
+
+def compare_residual(item: dict, reference: dict, mode: str):
+    values = item["values"].astype(float)
+    ref_values = reference["values"].astype(float)
+    errors = item["errors"].astype(float)
+    ref_errors = reference["errors"].astype(float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if mode == "ratio":
+            residual = np.divide(values, ref_values, out=np.full_like(values, np.nan), where=ref_values != 0)
+            rel_err_sq = np.divide(errors, values, out=np.zeros_like(values), where=values != 0) ** 2
+            rel_ref_sq = np.divide(ref_errors, ref_values, out=np.zeros_like(values), where=ref_values != 0) ** 2
+            residual_errors = np.abs(residual) * np.sqrt(rel_err_sq + rel_ref_sq)
+            return residual, residual_errors, "Ratio", 1.0
+        if mode == "relative_difference":
+            diff = values - ref_values
+            residual = 100.0 * np.divide(diff, ref_values, out=np.full_like(values, np.nan), where=ref_values != 0)
+            residual_errors = 100.0 * np.sqrt(errors**2 + ref_errors**2) / np.where(ref_values != 0, np.abs(ref_values), np.nan)
+            return residual, residual_errors, "% diff", 0.0
+    residual = values - ref_values
+    residual_errors = np.sqrt(errors**2 + ref_errors**2)
+    return residual, residual_errors, "Diff", 0.0
 
 
 def render_panel(
@@ -439,6 +597,104 @@ def normalize_th1(values, errors, widths, normalization: str):
         safe_widths = np.where(widths > 0, widths, 1.0)
         return values / safe_widths, errors / safe_widths
     return values, errors
+
+
+def draw_markers(ax, x_values, y_values, options: PlotOptions, color: str) -> None:
+    marker = matplotlib_marker(options.marker_style)
+    if marker:
+        ax.plot(
+            x_values,
+            y_values,
+            linestyle="none",
+            marker=marker,
+            markersize=max(3, options.line_width * 1.8),
+            color=color,
+            alpha=options.line_alpha,
+        )
+
+
+def draw_fit(ax, x_values, y_values, options: PlotOptions) -> None:
+    mask = np.isfinite(x_values) & np.isfinite(y_values)
+    if options.fit_x_min is not None:
+        mask &= x_values >= options.fit_x_min
+    if options.fit_x_max is not None:
+        mask &= x_values <= options.fit_x_max
+    if np.count_nonzero(mask) < 3:
+        return
+
+    x_fit = x_values[mask].astype(float)
+    y_fit = y_values[mask].astype(float)
+    order = polynomial_order(options.fit_model)
+    if order is not None:
+        if len(x_fit) <= order:
+            return
+        coeffs = np.polyfit(x_fit, y_fit, order)
+        x_line = np.linspace(float(np.min(x_fit)), float(np.max(x_fit)), 400)
+        y_line = np.polyval(coeffs, x_line)
+        label = f"fit: pol{order}"
+    elif options.fit_model == "exponential":
+        positive = y_fit > 0
+        if np.count_nonzero(positive) < 2:
+            return
+        slope, intercept = np.polyfit(x_fit[positive], np.log(y_fit[positive]), 1)
+        x_line = np.linspace(float(np.min(x_fit)), float(np.max(x_fit)), 400)
+        y_line = np.exp(intercept + slope * x_line)
+        label = "fit: exp"
+    else:
+        total = float(np.sum(y_fit))
+        if total <= 0:
+            return
+        mean = float(np.sum(x_fit * y_fit) / total)
+        sigma = float(np.sqrt(np.sum(y_fit * (x_fit - mean) ** 2) / total))
+        if sigma <= 0:
+            return
+        amplitude = float(np.max(y_fit))
+        x_line = np.linspace(float(np.min(x_fit)), float(np.max(x_fit)), 400)
+        y_line = amplitude * np.exp(-0.5 * ((x_line - mean) / sigma) ** 2)
+        label = f"fit: gaussian, mu={mean:.3g}, sigma={sigma:.3g}"
+
+    ax.plot(
+        x_line,
+        y_line,
+        color=options.line_color,
+        linewidth=max(1.0, options.line_width * 0.8),
+        linestyle="--",
+        alpha=min(1.0, options.line_alpha + 0.1),
+        label=label if options.show_legend else None,
+    )
+    if options.show_legend:
+        legend = ax.legend(frameon=False, fontsize=options.tick_font_size)
+        for text in legend.get_texts():
+            text.set_color(options.text_color)
+
+
+def polynomial_order(model: str) -> int | None:
+    aliases = {"linear": 1, "quadratic": 2, "cubic": 3}
+    if model in aliases:
+        return aliases[model]
+    match = re.fullmatch(r"pol([0-6])", model or "")
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def matplotlib_line_style(value: str | None) -> str:
+    return {
+        "solid": "-",
+        "dashed": "--",
+        "dashdot": "-.",
+        "dotted": ":",
+    }.get(value or "solid", "-")
+
+
+def matplotlib_marker(value: str | None) -> str | None:
+    return {
+        "none": None,
+        "circle": "o",
+        "square": "s",
+        "triangle": "^",
+        "diamond": "D",
+    }.get(value or "none")
 
 
 def figure_size(aspect_ratio: float) -> tuple[float, float]:

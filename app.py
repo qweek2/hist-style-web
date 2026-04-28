@@ -79,6 +79,14 @@ def plot(
     normalization: str = Query(default="raw", pattern="^(raw|area|max|bin_width)$"),
     show_errors: bool = True,
     show_legend: bool = True,
+    uncertainty_band: bool = False,
+    line_style: str = Query(default="solid", pattern="^(solid|dashed|dashdot|dotted)$"),
+    marker_style: str = Query(default="none", pattern="^(none|circle|square|triangle|diamond)$"),
+    line_alpha: float = Query(default=1.0, ge=0.05, le=1.0),
+    fit_enabled: bool = False,
+    fit_model: str = Query(default="gaussian", pattern="^(gaussian|exponential|linear|quadratic|cubic|pol[0-6])$"),
+    fit_x_min: float | None = None,
+    fit_x_max: float | None = None,
     include_summary: bool = False,
     font_family: str = "Arial, Helvetica, Liberation Sans, DejaVu Sans",
     figure_facecolor: str = Query(default="#ffffff", pattern=r"^#[0-9a-fA-F]{6}$"),
@@ -113,6 +121,14 @@ def plot(
         normalization=normalization,
         show_errors=show_errors,
         show_legend=show_legend,
+        uncertainty_band=uncertainty_band,
+        line_style=line_style,
+        marker_style=marker_style,
+        line_alpha=line_alpha,
+        fit_enabled=fit_enabled,
+        fit_model=fit_model,
+        fit_x_min=fit_x_min,
+        fit_x_max=fit_x_max,
         include_summary=include_summary,
         summary_text=summary_line(root_path, path) if include_summary else None,
         font_family=font_family,
@@ -206,6 +222,9 @@ def compare(file_id: str, payload: dict):
     paths = payload.get("paths", [])
     labels = payload.get("labels", [])
     colors = payload.get("colors", [])
+    styles = payload.get("styles", [])
+    markers = payload.get("markers", [])
+    alphas = payload.get("alphas", [])
     if len(paths) < 2:
         raise HTTPException(status_code=400, detail="Select at least two TH1/TProfile objects")
 
@@ -218,7 +237,10 @@ def compare(file_id: str, payload: dict):
                 raise HTTPException(status_code=400, detail="Compare supports TH1 and TProfile only")
             label = labels[index] if index < len(labels) and labels[index] else path
             color = colors[index] if index < len(colors) and colors[index] else None
-            histograms.append((label, hist, color))
+            style = styles[index] if index < len(styles) and styles[index] else None
+            marker = markers[index] if index < len(markers) and markers[index] else None
+            alpha = optional_float(alphas[index]) if index < len(alphas) and alphas[index] != "" else None
+            histograms.append((label, hist, color, style, marker, alpha))
         if options.include_summary:
             options.summary_text = f"Compared: {len(histograms)} histograms"
         image = render_compare_th1(histograms, options, image_format)
@@ -303,6 +325,15 @@ def options_from_settings(settings: dict) -> PlotOptions:
         normalization=settings.get("normalization") or "raw",
         show_errors=bool(settings.get("showErrors", True)),
         show_legend=bool(settings.get("showLegend", True)),
+        uncertainty_band=bool(settings.get("uncertaintyBand", False)),
+        line_style=settings.get("lineStyle") or "solid",
+        marker_style=settings.get("markerStyle") or "none",
+        line_alpha=optional_float(settings.get("lineAlpha"), 1.0),
+        compare_mode=settings.get("compareMode") or "overlay",
+        fit_enabled=bool(settings.get("fitEnabled", False)),
+        fit_model=settings.get("fitModel") or "gaussian",
+        fit_x_min=optional_float(settings.get("fitXMin")),
+        fit_x_max=optional_float(settings.get("fitXMax")),
         include_summary=bool(settings.get("includeSummary", False)),
         font_family=settings.get("fontFamily") or "Arial, Helvetica, Liberation Sans, DejaVu Sans",
         figure_facecolor=settings.get("figureFacecolor") or "#ffffff",
