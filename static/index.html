@@ -25,24 +25,7 @@
         <div id="histList" class="hist-list"></div>
       </section>
 
-      <section class="preview">
-        <div class="preview-toolbar">
-          <div id="selectedName">Select a histogram</div>
-          <div class="toolbar-actions">
-            <select id="formatInput" aria-label="Export format">
-              <option value="png" selected>PNG</option>
-              <option value="pdf">PDF</option>
-              <option value="svg">SVG</option>
-            </select>
-            <a id="downloadLink" class="button disabled" download="histogram.png">Download</a>
-            <button id="exportAllButton" class="button" type="button" disabled>Export all</button>
-            <button id="saveStyleButton" class="ghost-button" type="button">Save style</button>
-            <label class="ghost-button">
-              Load style
-              <input id="styleFileInput" type="file" accept=".json,application/json" />
-            </label>
-          </div>
-        </div>
+      <section class="settings-panel">
         <div class="settings">
           <details open>
             <summary>Plot</summary>
@@ -256,6 +239,26 @@
               </label>
             </div>
           </details>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div class="preview-toolbar">
+          <div id="selectedName">Select a histogram</div>
+          <div class="toolbar-actions">
+            <select id="formatInput" aria-label="Export format">
+              <option value="png" selected>PNG</option>
+              <option value="pdf">PDF</option>
+              <option value="svg">SVG</option>
+            </select>
+            <a id="downloadLink" class="button disabled" download="histogram.png">Download</a>
+            <button id="exportAllButton" class="button" type="button" disabled>Export all</button>
+            <button id="saveStyleButton" class="ghost-button" type="button">Save style</button>
+            <label class="ghost-button">
+              Load style
+              <input id="styleFileInput" type="file" accept=".json,application/json" />
+            </label>
+          </div>
         </div>
         <div class="plot-frame">
           <img id="plotImage" alt="" />

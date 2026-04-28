@@ -595,9 +595,9 @@ async function compareSelected() {
   selectedName.textContent = "Compare selected TH1";
   const imageFormat = formatInput.value;
   try {
-    const blob = await fetchCompareImage("png");
+    const blob = await fetchCompareImage("png", paths);
     setPlotBlob(blob);
-    const downloadBlob = await fetchCompareImage(imageFormat);
+    const downloadBlob = await fetchCompareImage(imageFormat, paths);
     setDownloadBlob(downloadBlob, `compare.${imageFormat}`);
     refreshSummary();
   } catch (error) {
@@ -641,7 +641,7 @@ async function fetchPanelImage(imageFormat) {
   return await response.blob();
 }
 
-async function fetchCompareImage(imageFormat) {
+async function fetchCompareImage(imageFormat, paths) {
   const response = await fetch(`/api/files/${currentFileId}/compare`, {
     method: "POST",
       headers: { "Content-Type": "application/json" },
