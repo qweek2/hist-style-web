@@ -444,9 +444,9 @@ function plotUrl(hist, imageFormat = "png") {
   addTextParam(params, "title", settings.title);
   addTextParam(params, "x_label", settings.xLabel);
   addTextParam(params, "y_label", settings.yLabel);
-  params.set("title_font_size", settings.titleFontSize);
-  params.set("label_font_size", settings.labelFontSize);
-  params.set("tick_font_size", settings.tickFontSize);
+  params.set("title_font_size", integerSetting(settings.titleFontSize, "13"));
+  params.set("label_font_size", integerSetting(settings.labelFontSize, "11"));
+  params.set("tick_font_size", integerSetting(settings.tickFontSize, "10"));
   addNumberParam(params, "x_min", settings.xMin);
   addNumberParam(params, "x_max", settings.xMax);
   addNumberParam(params, "y_min", settings.yMin);
@@ -467,6 +467,10 @@ function addTextParam(params, name, value) {
   if (value !== "") {
     params.set(name, value);
   }
+}
+
+function integerSetting(value, fallback) {
+  return Number.isInteger(Number(value)) && value !== "" ? value : fallback;
 }
 
 function effectiveSettings(hist) {
@@ -500,9 +504,9 @@ function saveSettingsFromForm() {
   target.title = titleInput.value;
   target.xLabel = xLabelInput.value;
   target.yLabel = yLabelInput.value;
-  target.titleFontSize = titleFontSizeInput.value;
-  target.labelFontSize = labelFontSizeInput.value;
-  target.tickFontSize = tickFontSizeInput.value;
+  target.titleFontSize = integerSetting(titleFontSizeInput.value, "13");
+  target.labelFontSize = integerSetting(labelFontSizeInput.value, "11");
+  target.tickFontSize = integerSetting(tickFontSizeInput.value, "10");
   target.xMin = xMinInput.value;
   target.xMax = xMaxInput.value;
   target.yMin = yMinInput.value;
@@ -569,12 +573,12 @@ async function compareSelected() {
 async function fetchCompareImage(imageFormat) {
   const response = await fetch(`/api/files/${currentFileId}/compare`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      format: imageFormat,
-      paths: Array.from(comparePaths),
-      settings: activeSettingsTarget(),
-    }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        format: imageFormat,
+        paths: Array.from(comparePaths),
+        settings: formSettings(),
+      }),
   });
   if (!response.ok) {
     throw new Error(await errorMessage(response));
@@ -595,6 +599,39 @@ function setDownloadBlob(blob, filename) {
   downloadLink.href = url;
   downloadLink.download = filename;
   downloadLink.classList.remove("disabled");
+}
+
+function formSettings() {
+  saveSettingsFromForm();
+  return {
+    ...activeSettingsTarget(),
+    stylePreset: stylePresetInput.value,
+    dpi: dpiInput.value,
+    aspectRatio: aspectRatioInput.value,
+    xScale: scaleValue("x"),
+    yScale: scaleValue("y"),
+    zScale: scaleValue("z"),
+    lineWidth: lineWidthInput.value,
+    lineColor: lineColorInput.value,
+    colormap: colormapInput.value,
+    normalization: normalizationInput.value,
+    showErrors: showErrorsInput.checked,
+    showLegend: showLegendInput.checked,
+    title: titleInput.value,
+    xLabel: xLabelInput.value,
+    yLabel: yLabelInput.value,
+    titleFontSize: integerSetting(titleFontSizeInput.value, "13"),
+    labelFontSize: integerSetting(labelFontSizeInput.value, "11"),
+    tickFontSize: integerSetting(tickFontSizeInput.value, "10"),
+    xMin: xMinInput.value,
+    xMax: xMaxInput.value,
+    yMin: yMinInput.value,
+    yMax: yMaxInput.value,
+    zMin: zMinInput.value,
+    zMax: zMaxInput.value,
+    showSummary: showSummaryInput.checked,
+    includeSummary: includeSummaryInput.checked,
+  };
 }
 
 async function exportAll() {

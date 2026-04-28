@@ -248,30 +248,30 @@ def parse_aspect_ratio(value: str) -> float:
 
 def options_from_settings(settings: dict) -> PlotOptions:
     return PlotOptions(
-        dpi=int(settings.get("dpi", 200)),
-        aspect_ratio=parse_aspect_ratio(settings.get("aspectRatio", "16:10")),
-        x_scale=settings.get("xScale", "linear"),
-        y_scale=settings.get("yScale", "linear"),
-        z_scale=settings.get("zScale", "linear"),
-        colormap=settings.get("colormap", "white-blue"),
-        normalization=settings.get("normalization", "raw"),
+        dpi=optional_int(settings.get("dpi"), 200),
+        aspect_ratio=parse_aspect_ratio(settings.get("aspectRatio") or "16:10"),
+        x_scale=settings.get("xScale") or "linear",
+        y_scale=settings.get("yScale") or "linear",
+        z_scale=settings.get("zScale") or "linear",
+        colormap=settings.get("colormap") or "white-blue",
+        normalization=settings.get("normalization") or "raw",
         show_errors=bool(settings.get("showErrors", True)),
         show_legend=bool(settings.get("showLegend", True)),
         include_summary=bool(settings.get("includeSummary", False)),
-        font_family=settings.get("fontFamily", "Arial, Helvetica, Liberation Sans, DejaVu Sans"),
-        figure_facecolor=settings.get("figureFacecolor", "#ffffff"),
-        axes_facecolor=settings.get("axesFacecolor", "#ffffff"),
-        text_color=settings.get("textColor", "#111827"),
-        axis_color=settings.get("axisColor", "#111827"),
-        tick_direction=settings.get("tickDirection", "out"),
-        line_width=float(settings.get("lineWidth", 2.0)),
-        line_color=settings.get("lineColor", "#1f77b4"),
+        font_family=settings.get("fontFamily") or "Arial, Helvetica, Liberation Sans, DejaVu Sans",
+        figure_facecolor=settings.get("figureFacecolor") or "#ffffff",
+        axes_facecolor=settings.get("axesFacecolor") or "#ffffff",
+        text_color=settings.get("textColor") or "#111827",
+        axis_color=settings.get("axisColor") or "#111827",
+        tick_direction=settings.get("tickDirection") or "out",
+        line_width=optional_float(settings.get("lineWidth"), 2.0),
+        line_color=settings.get("lineColor") or "#1f77b4",
         title=empty_to_none(settings.get("title")),
         x_label=empty_to_none(settings.get("xLabel")),
         y_label=empty_to_none(settings.get("yLabel")),
-        title_font_size=int(settings.get("titleFontSize", 13)),
-        label_font_size=int(settings.get("labelFontSize", 11)),
-        tick_font_size=int(settings.get("tickFontSize", 10)),
+        title_font_size=optional_int(settings.get("titleFontSize"), 13),
+        label_font_size=optional_int(settings.get("labelFontSize"), 11),
+        tick_font_size=optional_int(settings.get("tickFontSize"), 10),
         x_min=optional_float(settings.get("xMin")),
         x_max=optional_float(settings.get("xMax")),
         y_min=optional_float(settings.get("yMin")),
@@ -281,10 +281,16 @@ def options_from_settings(settings: dict) -> PlotOptions:
     )
 
 
-def optional_float(value) -> float | None:
+def optional_float(value, fallback: float | None = None) -> float | None:
     if value is None or value == "":
-        return None
+        return fallback
     return float(value)
+
+
+def optional_int(value, fallback: int) -> int:
+    if value is None or value == "":
+        return fallback
+    return int(value)
 
 
 def media_type(image_format: str) -> str:
