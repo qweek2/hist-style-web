@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+import numpy as np
 
 import app
 from plotting import PlotOptions
@@ -99,3 +100,65 @@ def test_export_manifest_contains_reproducibility_metadata():
     assert manifest["objects"][0]["hasObjectSettings"] is True
     assert manifest["objects"][0]["settings"]["lineColor"] == "#ff0000"
     assert manifest["objects"][1]["hasObjectSettings"] is False
+
+
+class FakeHist1D:
+    classname = "TH1D"
+
+    def __init__(self, values):
+        self._values = np.asarray(values, dtype=float)
+
+    def to_numpy(self):
+        return self._values, np.arange(len(self._values) + 1, dtype=float)
+
+
+class FakeProfile1D(FakeHist1D):
+    classname = "TProfile"
+
+    def to_numpy(self):
+        raise AttributeError("profile fallback required")
+
+    def values(self, flow=False):
+        return self._values
+
+    def axis(self):
+        return FakeAxis(len(self._values))
+
+
+class FakeAxis:
+    def __init__(self, n_bins):
+        self.n_bins = n_bins
+
+    def edges(self):
+        return np.arange(self.n_bins + 1, dtype=float)
+
+
+def test_analysis_metadata_describes_normalization_and_fit_input():
+    metadata = app.analysis_metadata("TH1", PlotOptions(normalization="bin_width", fit_enabled=True))
+
+    assert metadata["normalization"] == "divide by bin width"
+    assert "divided by bin width" in metadata["integralDefinition"]
+    assert metadata["fitInput"] == "displayed normalized values"
+
+
+def test_analysis_warnings_call_out_normalized_fit_and_log_values():
+    warnings = app.analysis_warnings(
+        FakeHist1D([1.0, 0.0, -2.0]),
+        "TH1",
+        PlotOptions(y_scale="log", normalization="area", fit_enabled=True),
+    )
+
+    assert "Object contains negative values" in warnings
+    assert "Log Y scale hides or rejects non-positive values" in warnings
+    assert "Normalization changes displayed amplitudes: area = 1" in warnings
+    assert "Fit is applied to displayed normalized values, not raw bin contents" in warnings
+
+
+def test_analysis_warnings_call_out_profile_semantics():
+    warnings = app.analysis_warnings(
+        FakeProfile1D([1.0, 2.0]),
+        "TProfile",
+        PlotOptions(),
+    )
+
+    assert any("TProfile bins represent mean Y per X bin" in warning for warning in warnings)

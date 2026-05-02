@@ -216,6 +216,8 @@ The `Analysis` tab provides a compact first-pass analysis view for 1D objects.
 
 It currently reports:
 
+- interpretation metadata for normalization, integral definition, fit input,
+  profile semantics, and active log scales
 - selected range integral
 - fraction of total integral inside the selected range
 - selected-range mean and RMS
@@ -357,6 +359,11 @@ The backend also validates common user-facing errors before rendering:
 Several ROOT/Matplotlib edge cases are handled defensively, including unsafe
 labels, mathtext parse failures, log tick formatting, and missing `to_numpy()`
 support for profiles.
+
+The Analysis tab also surfaces scientific interpretation warnings, including
+non-raw normalization, bin-width normalization, profile semantics, log-scale
+rejections of non-positive values, and fits performed on normalized displayed
+values.
 
 ## Local ROOT Paths
 

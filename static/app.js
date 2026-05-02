@@ -731,6 +731,7 @@ function renderAnalysis(analysis) {
     analysisResults.textContent = analysis.message;
   } else {
     analysisResults.innerHTML = [
+      analysisSection("Interpretation", interpretationRows(analysis.metadata)),
       analysisSection("Range", rangeRows(analysis.rangeStats)),
       analysisSection("Fit", fitRows(analysis.fit)),
     ].join("");
@@ -749,6 +750,23 @@ function analysisSection(title, rows) {
       <table>${rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")}</table>
     </div>
   `;
+}
+
+function interpretationRows(metadata) {
+  if (!metadata) return [["Status", "No interpretation metadata"]];
+  const rows = [
+    ["Object", escapeHtml(metadata.objectKind || "unknown")],
+    ["Normalization", escapeHtml(metadata.normalization || "raw")],
+    ["Integral", escapeHtml(metadata.integralDefinition || "sum of displayed bin values")],
+    ["Fit input", escapeHtml(metadata.fitInput || "displayed bin values")],
+  ];
+  if (metadata.profileSemantics) {
+    rows.push(["Profile", escapeHtml(metadata.profileSemantics)]);
+  }
+  const logScales = metadata.logScales || {};
+  const activeLogs = ["x", "y", "z"].filter((axis) => logScales[axis]).map((axis) => axis.toUpperCase());
+  rows.push(["Log scales", activeLogs.length ? activeLogs.join(", ") : "none"]);
+  return rows;
 }
 
 function rangeRows(stats) {

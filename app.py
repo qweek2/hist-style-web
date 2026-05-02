@@ -608,6 +608,7 @@ def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: floa
     payload = {
         "kind": kind,
         "range": {"xMin": x_min, "xMax": x_max},
+        "metadata": analysis_metadata(kind, options),
         "warnings": warnings,
     }
     if kind not in {"TH1", "TProfile"}:
@@ -641,6 +642,39 @@ def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: floa
     else:
         payload["fit"] = {"enabled": False, "message": "Fit is disabled"}
     return payload
+
+
+def analysis_metadata(kind: str, options: PlotOptions) -> dict:
+    return {
+        "objectKind": kind,
+        "normalization": normalization_label(options.normalization),
+        "integralDefinition": integral_definition(options.normalization),
+        "fitInput": "displayed normalized values" if options.normalization != "raw" else "raw bin contents",
+        "profileSemantics": profile_semantics(kind),
+        "logScales": {
+            "x": options.x_scale == "log",
+            "y": options.y_scale == "log",
+            "z": options.z_scale == "log",
+        },
+    }
+
+
+def integral_definition(normalization: str) -> str:
+    if normalization == "bin_width":
+        return "displayed values are divided by bin width; visual density and raw bin sums differ"
+    if normalization == "area":
+        return "displayed values are scaled to unit area"
+    if normalization == "max":
+        return "displayed values are scaled to unit maximum"
+    return "sum of raw bin contents"
+
+
+def profile_semantics(kind: str) -> str:
+    if kind == "TProfile":
+        return "profile bins are mean Y values per X bin, not event counts"
+    if kind == "TProfile2D":
+        return "profile bins are mean values per X/Y bin, not event density"
+    return ""
 
 
 def fit_analysis(values, edges, options: PlotOptions) -> dict:
@@ -738,15 +772,35 @@ def analysis_warnings(obj, kind: str, options: PlotOptions) -> list[str]:
     else:
         return [f"Unsupported object kind: {kind}"]
 
-    if np.any(np.asarray(values) < 0):
+    values_array = np.asarray(values)
+    if np.any(values_array < 0):
         warnings.append("Object contains negative values")
-    if options.y_scale == "log" and np.any(np.asarray(values) <= 0):
+    if options.y_scale == "log" and np.any(values_array <= 0):
         warnings.append("Log Y scale hides or rejects non-positive values")
+    if options.z_scale == "log" and kind in {"TH2", "TProfile2D"} and np.any(values_array <= 0):
+        warnings.append("Log Z scale hides or rejects non-positive bin values")
     if options.normalization != "raw":
-        warnings.append(f"Normalization changes amplitudes: {options.normalization}")
+        warnings.append(f"Normalization changes displayed amplitudes: {normalization_label(options.normalization)}")
+    if options.normalization == "bin_width":
+        warnings.append("Bin-width normalization displays density-like values; raw bin sums and visual area have different meanings")
+    if kind == "TProfile":
+        warnings.append("TProfile bins represent mean Y per X bin; entries and integrals are not ordinary TH1 event-count integrals")
+    if kind == "TProfile2D":
+        warnings.append("TProfile2D bins represent mean values per X/Y bin; color scale is not event density")
+    if options.fit_enabled and options.normalization != "raw":
+        warnings.append("Fit is applied to displayed normalized values, not raw bin contents")
     if options.fit_enabled and kind not in {"TH1", "TProfile"}:
         warnings.append("Fit is only available for TH1 and TProfile in Analysis v1")
     return warnings
+
+
+def normalization_label(value: str) -> str:
+    return {
+        "area": "area = 1",
+        "max": "max = 1",
+        "bin_width": "divide by bin width",
+        "raw": "raw",
+    }.get(value, value)
 
 
 def weighted_mean(centers, weights) -> float:
