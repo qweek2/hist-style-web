@@ -1,4 +1,6 @@
 const fileInput = document.querySelector("#fileInput");
+const rootPathInput = document.querySelector("#rootPathInput");
+const openRootPathButton = document.querySelector("#openRootPathButton");
 const dropZone = document.querySelector("#dropZone");
 const statusBox = document.querySelector("#status");
 const searchInput = document.querySelector("#searchInput");
@@ -7,6 +9,8 @@ const previewPanelButton = document.querySelector("#previewPanelButton");
 const panelButton = document.querySelector("#panelButton");
 const histList = document.querySelector("#histList");
 const plotImage = document.querySelector("#plotImage");
+const selectionOverlay = document.querySelector("#selectionOverlay");
+const selectionBox = document.querySelector("#selectionBox");
 const summaryLine = document.querySelector("#summaryLine");
 const selectedName = document.querySelector("#selectedName");
 const downloadLink = document.querySelector("#downloadLink");
@@ -14,6 +18,10 @@ const formatInput = document.querySelector("#formatInput");
 const exportAllButton = document.querySelector("#exportAllButton");
 const saveStyleButton = document.querySelector("#saveStyleButton");
 const styleFileInput = document.querySelector("#styleFileInput");
+const saveProjectButton = document.querySelector("#saveProjectButton");
+const projectFileInput = document.querySelector("#projectFileInput");
+const tabButtons = document.querySelectorAll(".tab-button");
+const tabPanes = document.querySelectorAll(".tab-pane");
 const stylePresetInput = document.querySelector("#stylePresetInput");
 const dpiInput = document.querySelector("#dpiInput");
 const aspectRatioInput = document.querySelector("#aspectRatioInput");
@@ -57,16 +65,32 @@ const panelTitlesInput = document.querySelector("#panelTitlesInput");
 const panelSpacingInput = document.querySelector("#panelSpacingInput");
 const panelGlobalTitleInput = document.querySelector("#panelGlobalTitleInput");
 const objectInfo = document.querySelector("#objectInfo");
+const copyDiagnosticsButton = document.querySelector("#copyDiagnosticsButton");
+const diagnosticsOutput = document.querySelector("#diagnosticsOutput");
+const analysisXMinInput = document.querySelector("#analysisXMinInput");
+const analysisXMaxInput = document.querySelector("#analysisXMaxInput");
+const analysisResults = document.querySelector("#analysisResults");
+const analysisWarnings = document.querySelector("#analysisWarnings");
 const scaleControls = document.querySelectorAll(".segmented[data-scale]");
 
 let currentFileId = null;
 let currentHist = null;
+let currentRootFileName = "";
+let currentRootFilePath = "";
 let refreshTimer = null;
+let analysisTimer = null;
+let metadataTimer = null;
 let allHistograms = [];
 let comparePaths = new Set();
 let compareMode = false;
 let panelMode = false;
 let compareObjectUrl = null;
+let activeTab = "render";
+let currentPlotMetadata = null;
+let selectionDrag = null;
+let lastDiagnostics = {
+  status: "No errors yet.",
+};
 const legendSettings = new Map();
 
 const globalSettings = {
@@ -225,6 +249,14 @@ const PRESETS = {
 fileInput.addEventListener("change", () => {
   if (fileInput.files.length) uploadFile(fileInput.files[0]);
 });
+openRootPathButton.addEventListener("click", () => openLocalRootPath(rootPathInput.value));
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => activateTab(button.dataset.tab));
+});
+selectionOverlay.addEventListener("pointerdown", startSelection);
+selectionOverlay.addEventListener("pointermove", updateSelection);
+selectionOverlay.addEventListener("pointerup", finishSelection);
+selectionOverlay.addEventListener("pointercancel", cancelSelection);
 
 [dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, lineStyleInput, markerStyleInput, lineAlphaInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, uncertaintyBandInput, compareModeInput, fitEnabledInput, fitModelInput, fitXMinInput, fitXMaxInput, titleInput, xLabelInput, yLabelInput, compareLabelsInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
   input.addEventListener("input", () => {
@@ -235,6 +267,11 @@ fileInput.addEventListener("change", () => {
     saveSettingsFromForm();
     refreshPlotSoon();
   });
+});
+
+[analysisXMinInput, analysisXMaxInput].forEach((input) => {
+  input.addEventListener("input", refreshAnalysisSoon);
+  input.addEventListener("change", refreshAnalysisSoon);
 });
 
 stylePresetInput.addEventListener("change", () => {
@@ -249,7 +286,7 @@ formatInput.addEventListener("change", () => {
   } else if (panelMode) {
     previewPanel();
   } else {
-    updateDownloadLink();
+    refreshPlot();
   }
 });
 exportAllButton.addEventListener("click", exportAll);
@@ -258,6 +295,9 @@ previewPanelButton.addEventListener("click", previewPanel);
 panelButton.addEventListener("click", exportPanel);
 saveStyleButton.addEventListener("click", saveStyle);
 styleFileInput.addEventListener("change", loadStyle);
+saveProjectButton.addEventListener("click", saveProject);
+projectFileInput.addEventListener("change", loadProject);
+copyDiagnosticsButton.addEventListener("click", copyDiagnostics);
 searchInput.addEventListener("input", () => renderHistogramList(filteredHistograms()));
 
 scaleControls.forEach((control) => {
@@ -298,11 +338,31 @@ dropZone.addEventListener("drop", (event) => {
   if (file) uploadFile(file);
 });
 
+function activateTab(name) {
+  activeTab = name;
+  tabButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === name);
+  });
+  tabPanes.forEach((pane) => {
+    pane.classList.toggle("active", pane.id === `${name}Tab`);
+  });
+  if (name === "analysis") {
+    refreshAnalysisSoon();
+    refreshPlotMetadataSoon();
+  } else {
+    updateSelectionOverlay();
+  }
+}
+
 async function uploadFile(file) {
-  statusBox.textContent = "Uploading...";
+  showStatus("Uploading...");
   histList.innerHTML = "";
   plotImage.removeAttribute("src");
   summaryLine.textContent = "";
+  currentPlotMetadata = null;
+  updateSelectionOverlay();
+  analysisResults.textContent = "Select a 1D object";
+  analysisWarnings.innerHTML = "<li>No object selected</li>";
   selectedName.textContent = "Select a histogram";
   downloadLink.classList.add("disabled");
 
@@ -315,12 +375,50 @@ async function uploadFile(file) {
   });
 
   if (!response.ok) {
-    statusBox.textContent = await errorMessage(response);
+    showError("Upload ROOT file", await errorFromResponse(response), {
+      endpoint: "/api/upload",
+      filename: file.name,
+      size: file.size,
+    });
     return;
   }
 
   const data = await response.json();
+  const typedPath = rootPathInput.value.trim();
+  const typedName = typedPath.split(/[\\/]/).pop();
+  setLoadedRootFile(data, file.name, typedName === file.name ? typedPath : "");
+}
+
+async function openLocalRootPath(path, silent = false) {
+  const rootPath = path.trim();
+  if (!rootPath) {
+    throw new Error("ROOT file path is empty");
+  }
+
+  if (!silent) showStatus("Opening local ROOT file...");
+  const response = await fetch("/api/open-local-root", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: rootPath }),
+  });
+  if (!response.ok) {
+    const error = await errorFromResponse(response, {
+      endpoint: "/api/open-local-root",
+      path: rootPath,
+    });
+    if (!silent) showError("Open local ROOT file", error);
+    throw error;
+  }
+
+  const data = await response.json();
+  setLoadedRootFile(data, data.rootFileName || rootPath.split(/[\\/]/).pop(), data.rootFilePath || rootPath);
+}
+
+function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
   currentFileId = data.fileId;
+  currentRootFileName = rootFileName || "";
+  currentRootFilePath = rootFilePath || "";
+  rootPathInput.value = currentRootFilePath;
   currentHist = null;
   allHistograms = data.histograms;
   comparePaths.clear();
@@ -333,7 +431,11 @@ async function uploadFile(file) {
   exportAllButton.disabled = false;
   loadSettingsToForm();
   objectInfo.textContent = "Select an object";
-  statusBox.textContent = `${data.histograms.length} histograms found`;
+  currentPlotMetadata = null;
+  updateSelectionOverlay();
+  analysisResults.textContent = "Select a 1D object";
+  analysisWarnings.innerHTML = "<li>No object selected</li>";
+  showStatus(`${data.histograms.length} histograms found`);
   renderHistogramList(filteredHistograms());
 }
 
@@ -360,7 +462,7 @@ function renderHistogramList(histograms) {
   renderLegendEditor();
 }
 
-function selectHistogram(hist, button) {
+function selectHistogram(hist, button, render = true) {
   document.querySelectorAll(".hist-item.active").forEach((item) => {
     item.classList.remove("active");
   });
@@ -376,7 +478,33 @@ function selectHistogram(hist, button) {
   selectedName.textContent = hist.path;
   downloadLink.classList.remove("disabled");
   refreshObjectInfo(hist.path);
-  refreshPlot();
+  refreshAnalysisSoon();
+  refreshPlotMetadataSoon();
+  if (render) refreshPlot();
+}
+
+function selectHistogramByPath(path, render = true) {
+  const hist = allHistograms.find((item) => item.path === path);
+  if (!hist) {
+    showError("Load project", new Error(`Object not found in current ROOT file: ${path}`));
+    return;
+  }
+  const buttons = Array.from(document.querySelectorAll(".hist-item"));
+  const button = buttons.find((item) => item.querySelector("span")?.textContent === path);
+  if (button) {
+    selectHistogram(hist, button, render);
+  } else {
+    currentHist = hist;
+    customInput.disabled = false;
+    customInput.checked = histSettings.has(hist.path);
+    loadSettingsToForm();
+    selectedName.textContent = hist.path;
+    downloadLink.classList.remove("disabled");
+    refreshObjectInfo(hist.path);
+    refreshAnalysisSoon();
+    refreshPlotMetadataSoon();
+    if (render) refreshPlot();
+  }
 }
 
 function filteredHistograms() {
@@ -417,9 +545,21 @@ function selectedComparePaths() {
 function refreshPlotSoon() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(refreshPlot, 250);
+  refreshAnalysisSoon();
+  refreshPlotMetadataSoon();
 }
 
-function refreshPlot() {
+function refreshAnalysisSoon() {
+  clearTimeout(analysisTimer);
+  analysisTimer = setTimeout(refreshAnalysis, 250);
+}
+
+function refreshPlotMetadataSoon() {
+  clearTimeout(metadataTimer);
+  metadataTimer = setTimeout(refreshPlotMetadata, 250);
+}
+
+async function refreshPlot() {
   if (compareMode) {
     compareSelected();
     return;
@@ -431,10 +571,17 @@ function refreshPlot() {
 
   if (!currentFileId || !currentHist) return;
 
-  const url = plotUrl(currentHist);
-  plotImage.src = url;
-  updateDownloadLink();
-  refreshSummary();
+  const imageFormat = formatInput.value;
+  try {
+    const blob = await fetchPlotImage(currentHist, "png");
+    setPlotBlob(blob);
+    const downloadBlob = await fetchPlotImage(currentHist, imageFormat);
+    setDownloadBlob(downloadBlob, `${safeName(currentHist.path)}.${imageFormat}`);
+    refreshSummary();
+    refreshPlotMetadataSoon();
+  } catch (error) {
+    showError(`Render ${currentHist.path}`, error);
+  }
 }
 
 function updateDownloadLink() {
@@ -443,6 +590,19 @@ function updateDownloadLink() {
   const imageFormat = formatInput.value;
   downloadLink.href = plotUrl(currentHist, imageFormat);
   downloadLink.download = `${safeName(currentHist.path)}.${imageFormat}`;
+}
+
+async function fetchPlotImage(hist, imageFormat) {
+  const url = plotUrl(hist, imageFormat);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw await errorFromResponse(response, {
+      endpoint: url.split("?")[0],
+      path: hist.path,
+      params: Object.fromEntries(new URLSearchParams(url.split("?")[1] || "")),
+    });
+  }
+  return await response.blob();
 }
 
 async function refreshSummary() {
@@ -467,7 +627,12 @@ async function refreshSummary() {
 
   const response = await fetch(`/api/files/${currentFileId}/summary?${params.toString()}`);
   if (!response.ok) {
-    summaryLine.textContent = `Failed to summarize ${currentHist.path}: ${await errorMessage(response)}`;
+    const error = await errorFromResponse(response);
+    summaryLine.textContent = `Failed to summarize ${currentHist.path}: ${error.message}`;
+    setDiagnostics("Summarize object", error, {
+      endpoint: `/api/files/${currentFileId}/summary`,
+      path: currentHist.path,
+    });
     return;
   }
 
@@ -480,10 +645,235 @@ async function refreshObjectInfo(path) {
   params.set("path", path);
   const response = await fetch(`/api/files/${currentFileId}/info?${params.toString()}`);
   if (!response.ok) {
-    objectInfo.textContent = `Failed to load info for ${path}: ${await errorMessage(response)}`;
+    const error = await errorFromResponse(response);
+    objectInfo.textContent = `Failed to load info for ${path}: ${error.message}`;
+    setDiagnostics("Load object info", error, {
+      endpoint: `/api/files/${currentFileId}/info`,
+      path,
+    });
     return;
   }
   objectInfo.innerHTML = formatObjectInfo(await response.json());
+}
+
+async function refreshAnalysis() {
+  if (!currentFileId || !currentHist || compareMode || panelMode) {
+    return;
+  }
+
+  const payload = {
+    path: currentHist.path,
+    settings: formSettings(),
+    xMin: analysisXMinInput.value,
+    xMax: analysisXMaxInput.value,
+  };
+
+  try {
+    const response = await fetch(`/api/files/${currentFileId}/analysis`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw await errorFromResponse(response, {
+        endpoint: `/api/files/${currentFileId}/analysis`,
+        payload,
+      });
+    }
+    renderAnalysis(await response.json());
+  } catch (error) {
+    showError("Analyze object", error);
+  }
+}
+
+async function refreshPlotMetadata() {
+  if (!currentFileId || !currentHist || compareMode || panelMode) {
+    currentPlotMetadata = null;
+    updateSelectionOverlay();
+    return;
+  }
+
+  const payload = {
+    path: currentHist.path,
+    settings: formSettings(),
+  };
+
+  try {
+    const response = await fetch(`/api/files/${currentFileId}/plot-metadata`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw await errorFromResponse(response, {
+        endpoint: `/api/files/${currentFileId}/plot-metadata`,
+        payload,
+      });
+    }
+    currentPlotMetadata = await response.json();
+    updateSelectionOverlay();
+  } catch (error) {
+    currentPlotMetadata = null;
+    updateSelectionOverlay();
+    setDiagnostics("Load plot metadata", normalizeError(error));
+  }
+}
+
+function renderAnalysis(analysis) {
+  if (analysis.message) {
+    analysisResults.textContent = analysis.message;
+  } else {
+    analysisResults.innerHTML = [
+      analysisSection("Range", rangeRows(analysis.rangeStats)),
+      analysisSection("Fit", fitRows(analysis.fit)),
+    ].join("");
+  }
+
+  const warnings = analysis.warnings || [];
+  analysisWarnings.innerHTML = warnings.length
+    ? warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
+    : "<li>No warnings</li>";
+}
+
+function analysisSection(title, rows) {
+  return `
+    <div class="analysis-card">
+      <strong>${title}</strong>
+      <table>${rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")}</table>
+    </div>
+  `;
+}
+
+function rangeRows(stats) {
+  if (!stats) return [["Status", "No range statistics"]];
+  return [
+    ["Bins", stats.bins],
+    ["Integral", formatNumber(stats.integral)],
+    ["Fraction", `${formatNumber(100 * stats.fraction)}%`],
+    ["Mean", formatNumber(stats.mean)],
+    ["RMS", formatNumber(stats.rms)],
+  ];
+}
+
+function fitRows(fit) {
+  if (!fit || !fit.enabled) return [["Status", "Fit disabled"]];
+  if (!fit.ok) return [["Status", escapeHtml(fit.message || "Fit failed")]];
+  const rows = [
+    ["Model", escapeHtml(fit.model)],
+    ["Points", fit.points],
+    ["chi2 / ndf", fit.ndf ? `${formatNumber(fit.chi2)} / ${fit.ndf} = ${formatNumber(fit.chi2Ndf)}` : "n/a"],
+    ["Residual RMS", formatNumber(fit.residualRms)],
+    ["Pull mean / RMS", `${formatNumber(fit.pullMean)} / ${formatNumber(fit.pullRms)}`],
+  ];
+  for (const parameter of fit.parameters || []) {
+    rows.push([escapeHtml(parameter.name), formatNumber(parameter.value)]);
+  }
+  return rows;
+}
+
+function updateSelectionOverlay() {
+  const canSelect = activeTab === "analysis" && currentPlotMetadata && ["TH1", "TProfile"].includes(currentPlotMetadata.kind);
+  selectionOverlay.hidden = !canSelect;
+  if (!canSelect) {
+    selectionBox.style.display = "none";
+  }
+}
+
+function startSelection(event) {
+  if (selectionOverlay.hidden || !currentPlotMetadata) return;
+  event.preventDefault();
+  selectionOverlay.setPointerCapture(event.pointerId);
+  const x = clampedOverlayX(event);
+  selectionDrag = { startX: x, currentX: x, pointerId: event.pointerId };
+  drawSelectionBox(selectionDrag.startX, selectionDrag.currentX);
+}
+
+function updateSelection(event) {
+  if (!selectionDrag || event.pointerId !== selectionDrag.pointerId) return;
+  selectionDrag.currentX = clampedOverlayX(event);
+  drawSelectionBox(selectionDrag.startX, selectionDrag.currentX);
+}
+
+function finishSelection(event) {
+  if (!selectionDrag || event.pointerId !== selectionDrag.pointerId) return;
+  selectionDrag.currentX = clampedOverlayX(event);
+  const startX = selectionDrag.startX;
+  const endX = selectionDrag.currentX;
+  selectionDrag = null;
+  selectionOverlay.releasePointerCapture(event.pointerId);
+
+  if (Math.abs(endX - startX) < 4) {
+    selectionBox.style.display = "none";
+    return;
+  }
+
+  const xA = pixelToDataX(Math.min(startX, endX));
+  const xB = pixelToDataX(Math.max(startX, endX));
+  if (xA === null || xB === null) {
+    selectionBox.style.display = "none";
+    return;
+  }
+  analysisXMinInput.value = compactNumber(xA);
+  analysisXMaxInput.value = compactNumber(xB);
+  refreshAnalysisSoon();
+}
+
+function cancelSelection(event) {
+  if (selectionDrag && event.pointerId === selectionDrag.pointerId) {
+    selectionDrag = null;
+    selectionBox.style.display = "none";
+  }
+}
+
+function drawSelectionBox(startX, endX) {
+  const left = Math.min(startX, endX);
+  const width = Math.abs(endX - startX);
+  selectionBox.style.display = "block";
+  selectionBox.style.left = `${left}px`;
+  selectionBox.style.width = `${width}px`;
+}
+
+function clampedOverlayX(event) {
+  const rect = selectionOverlay.getBoundingClientRect();
+  return Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+}
+
+function pixelToDataX(pixelX) {
+  const imageRect = renderedImageRect();
+  if (!imageRect || !currentPlotMetadata?.axesBox) return null;
+  const axes = currentPlotMetadata.axesBox;
+  const axesLeft = imageRect.left + axes.left * imageRect.width;
+  const axesWidth = axes.width * imageRect.width;
+  if (axesWidth <= 0) return null;
+  const relative = Math.max(0, Math.min(1, (pixelX - axesLeft) / axesWidth));
+  const xMin = Number(currentPlotMetadata.xMin);
+  const xMax = Number(currentPlotMetadata.xMax);
+  if (!Number.isFinite(xMin) || !Number.isFinite(xMax)) return null;
+  return xMin + relative * (xMax - xMin);
+}
+
+function renderedImageRect() {
+  if (!plotImage.naturalWidth || !plotImage.naturalHeight) return null;
+  const imageBox = plotImage.getBoundingClientRect();
+  const overlayBox = selectionOverlay.getBoundingClientRect();
+  const naturalRatio = plotImage.naturalWidth / plotImage.naturalHeight;
+  const boxRatio = imageBox.width / imageBox.height;
+  let width = imageBox.width;
+  let height = imageBox.height;
+  let left = imageBox.left - overlayBox.left;
+  let top = imageBox.top - overlayBox.top;
+  if (boxRatio > naturalRatio) {
+    width = imageBox.height * naturalRatio;
+    left += (imageBox.width - width) / 2;
+  } else {
+    height = imageBox.width / naturalRatio;
+    top += (imageBox.height - height) / 2;
+  }
+  return { left, top, width, height };
+}
+
+function compactNumber(value) {
+  return Number(value).toPrecision(8).replace(/\.?0+($|e)/, "$1");
 }
 
 function formatObjectInfo(info) {
@@ -505,7 +895,7 @@ function formatObjectInfo(info) {
 }
 
 function formatSummary(summary) {
-  if (summary.kind === "TH2") {
+  if (summary.kind === "TH2" || summary.kind === "TProfile2D") {
     return [
       `Entries: ${formatNumber(summary.entries)}`,
       `Integral: ${formatNumber(summary.integral)}`,
@@ -523,21 +913,33 @@ function formatSummary(summary) {
 }
 
 function formatNumber(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "n/a";
+  }
   return Number(value).toLocaleString(undefined, {
     maximumSignificantDigits: 5,
   });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function plotUrl(hist, imageFormat = "png") {
   const settings = effectiveSettings(hist);
   const params = new URLSearchParams();
   params.set("path", hist.path);
-  params.set("dpi", settings.dpi);
+  params.set("dpi", integerSetting(settings.dpi, "200"));
   params.set("aspect_ratio", settings.aspectRatio);
   params.set("x_scale", settings.xScale);
   params.set("y_scale", settings.yScale);
   params.set("z_scale", settings.zScale);
-  params.set("line_width", settings.lineWidth);
+  params.set("line_width", numberSetting(settings.lineWidth, "2"));
   params.set("line_color", settings.lineColor);
   params.set("line_style", settings.lineStyle);
   params.set("marker_style", settings.markerStyle);
@@ -616,7 +1018,7 @@ function saveSettingsFromForm() {
   target.xScale = scaleValue("x");
   target.yScale = scaleValue("y");
   target.zScale = scaleValue("z");
-  target.lineWidth = lineWidthInput.value;
+  target.lineWidth = numberSetting(lineWidthInput.value, target.lineWidth || globalSettings.lineWidth || "2");
   target.lineColor = lineColorInput.value;
   target.lineStyle = lineStyleInput.value;
   target.markerStyle = markerStyleInput.value;
@@ -655,7 +1057,7 @@ function loadSettingsToForm() {
   setScaleControl("x", settings.xScale);
   setScaleControl("y", settings.yScale);
   setScaleControl("z", settings.zScale);
-  lineWidthInput.value = settings.lineWidth;
+  lineWidthInput.value = numberSetting(settings.lineWidth, "2");
   lineColorInput.value = settings.lineColor;
   lineStyleInput.value = settings.lineStyle || "solid";
   markerStyleInput.value = settings.markerStyle || "none";
@@ -708,7 +1110,7 @@ async function compareSelected() {
     setDownloadBlob(downloadBlob, `compare.${imageFormat}`);
     refreshSummary();
   } catch (error) {
-    statusBox.textContent = `Failed to compare selected objects: ${error.message}`;
+    showError("Compare selected objects", error);
   }
 }
 
@@ -727,50 +1129,58 @@ async function previewPanel() {
     setDownloadBlob(downloadBlob, `panel.${imageFormat}`);
     refreshSummary();
   } catch (error) {
-    statusBox.textContent = `Failed to render panel: ${error.message}`;
+    showError("Render panel", error);
   }
 }
 
 async function fetchPanelImage(imageFormat) {
+  const payload = {
+    format: imageFormat,
+    paths: Array.from(comparePaths),
+    columns: panelColumnsInput.value,
+    sharedX: panelSharedXInput.checked,
+    sharedY: panelSharedYInput.checked,
+    equalRanges: panelEqualRangesInput.checked,
+    panelTitles: panelTitlesInput.checked,
+    globalTitle: panelGlobalTitleInput.value,
+    spacing: panelSpacingInput.value,
+    settings: formSettings(),
+  };
   const response = await fetch(`/api/files/${currentFileId}/panel`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      format: imageFormat,
-      paths: Array.from(comparePaths),
-      columns: panelColumnsInput.value,
-      sharedX: panelSharedXInput.checked,
-      sharedY: panelSharedYInput.checked,
-      equalRanges: panelEqualRangesInput.checked,
-      panelTitles: panelTitlesInput.checked,
-      globalTitle: panelGlobalTitleInput.value,
-      spacing: panelSpacingInput.value,
-      settings: formSettings(),
-    }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    throw new Error(await errorMessage(response));
+    throw await errorFromResponse(response, {
+      endpoint: `/api/files/${currentFileId}/panel`,
+      payload,
+    });
   }
   return await response.blob();
 }
 
 async function fetchCompareImage(imageFormat, paths) {
+  const payload = {
+    format: imageFormat,
+    paths,
+    labels: compareLabels(paths),
+    colors: compareColors(paths),
+    styles: compareStyles(paths),
+    markers: compareMarkers(paths),
+    alphas: compareAlphas(paths),
+    settings: formSettings(),
+  };
   const response = await fetch(`/api/files/${currentFileId}/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      format: imageFormat,
-      paths,
-      labels: compareLabels(paths),
-      colors: compareColors(paths),
-      styles: compareStyles(paths),
-      markers: compareMarkers(paths),
-      alphas: compareAlphas(paths),
-      settings: formSettings(),
-    }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    throw new Error(await errorMessage(response));
+    throw await errorFromResponse(response, {
+      endpoint: `/api/files/${currentFileId}/compare`,
+      payload,
+    });
   }
   return await response.blob();
 }
@@ -883,6 +1293,8 @@ async function exportPanel() {
   try {
     const imageFormat = formatInput.value;
     downloadBlob(await fetchPanelImage(imageFormat), `panel.${imageFormat}`);
+  } catch (error) {
+    showError("Export panel", error);
   } finally {
     updateCompareButton();
   }
@@ -903,6 +1315,49 @@ function setDownloadBlob(blob, filename) {
   downloadLink.classList.remove("disabled");
 }
 
+function showStatus(message) {
+  statusBox.textContent = message;
+}
+
+function showError(context, error, details = {}) {
+  const normalized = normalizeError(error);
+  statusBox.textContent = `${context}: ${normalized.message}`;
+  setDiagnostics(context, normalized, details);
+}
+
+function setDiagnostics(context, error, details = {}) {
+  lastDiagnostics = {
+    time: new Date().toISOString(),
+    context,
+    message: error.message || String(error),
+    status: error.status || null,
+    ...error.details,
+    ...details,
+  };
+  diagnosticsOutput.textContent = JSON.stringify(lastDiagnostics, null, 2);
+}
+
+function normalizeError(error) {
+  if (error && typeof error === "object") {
+    return {
+      message: error.message || String(error),
+      status: error.status || null,
+      details: error.details || {},
+    };
+  }
+  return { message: String(error), status: null, details: {} };
+}
+
+async function copyDiagnostics() {
+  const text = JSON.stringify(lastDiagnostics, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    showStatus("Diagnostics copied");
+  } catch {
+    diagnosticsOutput.textContent = text;
+  }
+}
+
 function formSettings() {
   saveSettingsFromForm();
   return {
@@ -913,7 +1368,7 @@ function formSettings() {
     xScale: scaleValue("x"),
     yScale: scaleValue("y"),
     zScale: scaleValue("z"),
-    lineWidth: lineWidthInput.value,
+    lineWidth: numberSetting(lineWidthInput.value, "2"),
     lineColor: lineColorInput.value,
     lineStyle: lineStyleInput.value,
     markerStyle: markerStyleInput.value,
@@ -957,7 +1412,10 @@ async function exportAll() {
       body: JSON.stringify(stylePayload(formatInput.value)),
     });
     if (!response.ok) {
-      statusBox.textContent = `Failed to export all: ${await errorMessage(response)}`;
+      showError("Export all", await errorFromResponse(response, {
+        endpoint: `/api/files/${currentFileId}/export`,
+        payload: stylePayload(formatInput.value),
+      }));
       return;
     }
     downloadBlob(await response.blob(), `histograms_${formatInput.value}.zip`);
@@ -972,6 +1430,13 @@ function saveStyle() {
     type: "application/json",
   });
   downloadBlob(blob, "histogram_style.json");
+}
+
+function saveProject() {
+  const blob = new Blob([JSON.stringify(projectPayload(), null, 2)], {
+    type: "application/json",
+  });
+  downloadBlob(blob, "histogram_project.json");
 }
 
 async function loadStyle() {
@@ -993,6 +1458,21 @@ async function loadStyle() {
   styleFileInput.value = "";
 }
 
+async function loadProject() {
+  const file = projectFileInput.files[0];
+  if (!file) return;
+
+  try {
+    const payload = JSON.parse(await file.text());
+    await applyProjectPayload(payload);
+    showStatus("Project loaded");
+  } catch (error) {
+    showError("Load project", error, { filename: file.name });
+  } finally {
+    projectFileInput.value = "";
+  }
+}
+
 function stylePayload(imageFormat) {
   saveSettingsFromForm();
   return {
@@ -1001,6 +1481,134 @@ function stylePayload(imageFormat) {
     globalSettings: { ...globalSettings },
     histSettings: Object.fromEntries(histSettings),
   };
+}
+
+function projectPayload() {
+  saveSettingsFromForm();
+  return {
+    schema: "hist-style-web.project.v1",
+    createdAt: new Date().toISOString(),
+    app: {
+      name: "Histogram Style Web",
+      version: "0.1.0",
+    },
+    source: {
+      rootFileName: currentRootFileName || "",
+      rootFilePath: rootPathInput.value.trim() || currentRootFilePath || "",
+      objectCount: allHistograms.length,
+    },
+    view: {
+      mode: panelMode ? "panel" : compareMode ? "compare" : "single",
+      currentPath: currentHist?.path || "",
+      comparePaths: Array.from(comparePaths),
+      search: searchInput.value,
+      format: formatInput.value,
+    },
+    settings: {
+      global: { ...globalSettings },
+      perObject: Object.fromEntries(histSettings),
+    },
+    compare: {
+      legendText: compareLabelsInput.value,
+      curves: Object.fromEntries(legendSettings),
+    },
+    panel: {
+      columns: panelColumnsInput.value,
+      sharedX: panelSharedXInput.checked,
+      sharedY: panelSharedYInput.checked,
+      equalRanges: panelEqualRangesInput.checked,
+      panelTitles: panelTitlesInput.checked,
+      spacing: panelSpacingInput.value,
+      globalTitle: panelGlobalTitleInput.value,
+    },
+    analysis: {
+      xMin: analysisXMinInput.value,
+      xMax: analysisXMaxInput.value,
+    },
+  };
+}
+
+async function applyProjectPayload(payload) {
+  if (payload.schema !== "hist-style-web.project.v1") {
+    throw new Error("Unsupported project file schema");
+  }
+  const expectedRootFileName = payload.source?.rootFileName || "";
+  const expectedRootFilePath = payload.source?.rootFilePath || "";
+
+  if (expectedRootFilePath && currentRootFilePath !== expectedRootFilePath) {
+    try {
+      await openLocalRootPath(expectedRootFilePath, true);
+    } catch (error) {
+      if (!allHistograms.length) {
+        throw new Error(`Cannot open ROOT file from saved path. Upload it manually: ${expectedRootFileName || expectedRootFilePath}`);
+      }
+      setDiagnostics("Load project", error, {
+        note: "Could not auto-open saved ROOT path. Keeping the currently loaded ROOT file.",
+        projectRootFilePath: expectedRootFilePath,
+      });
+    }
+  }
+
+  if (!allHistograms.length) {
+    throw new Error("Upload the matching ROOT file before loading a project");
+  }
+
+  Object.assign(globalSettings, payload.settings?.global || {});
+  histSettings.clear();
+  for (const [path, settings] of Object.entries(payload.settings?.perObject || {})) {
+    histSettings.set(path, settings);
+  }
+
+  legendSettings.clear();
+  for (const [path, settings] of Object.entries(payload.compare?.curves || {})) {
+    legendSettings.set(path, settings);
+  }
+
+  comparePaths = new Set(payload.view?.comparePaths || []);
+  compareLabelsInput.value = payload.compare?.legendText || "";
+  searchInput.value = payload.view?.search || "";
+  formatInput.value = payload.view?.format || "png";
+
+  panelColumnsInput.value = payload.panel?.columns || "2";
+  panelSharedXInput.checked = Boolean(payload.panel?.sharedX);
+  panelSharedYInput.checked = Boolean(payload.panel?.sharedY);
+  panelEqualRangesInput.checked = Boolean(payload.panel?.equalRanges);
+  panelTitlesInput.checked = payload.panel?.panelTitles !== false;
+  panelSpacingInput.value = payload.panel?.spacing || "0.25";
+  panelGlobalTitleInput.value = payload.panel?.globalTitle || "";
+  analysisXMinInput.value = payload.analysis?.xMin || "";
+  analysisXMaxInput.value = payload.analysis?.xMax || "";
+
+  renderHistogramList(filteredHistograms());
+  const targetPath = payload.view?.currentPath;
+  if (targetPath) {
+    selectHistogramByPath(targetPath, false);
+  } else {
+    currentHist = null;
+    customInput.checked = false;
+    customInput.disabled = true;
+    loadSettingsToForm();
+  }
+  renderLegendEditor();
+  updateCompareButton();
+
+  const mode = payload.view?.mode || "single";
+  if (mode === "compare" && selectedComparePaths().length >= 2) {
+    compareSelected();
+  } else if (mode === "panel" && comparePaths.size >= 1) {
+    previewPanel();
+  } else if (currentHist) {
+    refreshPlot();
+  }
+
+  if (expectedRootFileName && currentRootFileName && expectedRootFileName !== currentRootFileName) {
+    setDiagnostics("Load project", new Error("Project was saved for a different ROOT file."), {
+      projectRootFileName: expectedRootFileName,
+      currentRootFileName,
+      projectRootFilePath: expectedRootFilePath,
+      currentRootFilePath,
+    });
+  }
 }
 
 function downloadBlob(blob, filename) {
@@ -1039,11 +1647,28 @@ function safeName(value) {
   return value.replace(/[\\/:*?"<>|]/g, "_");
 }
 
-async function errorMessage(response) {
+async function errorFromResponse(response, details = {}) {
   try {
     const data = await response.json();
-    return data.detail || response.statusText;
+    return {
+      message: readableDetail(data.detail) || response.statusText,
+      status: response.status,
+      details,
+    };
   } catch {
-    return await response.text();
+    return {
+      message: await response.text(),
+      status: response.status,
+      details,
+    };
   }
+}
+
+function readableDetail(detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
+  }
+  return JSON.stringify(detail);
 }

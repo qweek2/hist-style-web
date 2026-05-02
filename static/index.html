@@ -17,6 +17,10 @@
           <input id="fileInput" type="file" accept=".root" />
           <span>Drop ROOT file here</span>
         </label>
+        <div class="local-root">
+          <input id="rootPathInput" class="search-input" type="text" placeholder="Optional local ROOT path" />
+          <button id="openRootPathButton" class="ghost-button" type="button">Open</button>
+        </div>
         <div id="status" class="status">No file loaded</div>
         <input id="searchInput" class="search-input" type="search" placeholder="Search histograms" />
         <button id="compareButton" class="button compare-button" type="button" disabled>Compare selected</button>
@@ -26,7 +30,11 @@
       </section>
 
       <section class="settings-panel">
-        <div class="settings">
+        <div class="tab-bar" role="tablist" aria-label="Settings tabs">
+          <button id="renderTabButton" class="tab-button active" type="button" data-tab="render">Render</button>
+          <button id="analysisTabButton" class="tab-button" type="button" data-tab="analysis">Analysis</button>
+        </div>
+        <div id="renderTab" class="settings tab-pane active">
           <details open>
             <summary>Plot</summary>
             <div class="settings-row">
@@ -48,6 +56,7 @@
                 <option selected>200</option>
                 <option>250</option>
                 <option>300</option>
+                <option>400</option>
               </select>
             </label>
             <label>
@@ -163,37 +172,6 @@
                 <span>Reference band</span>
               </label>
               <div id="legendEditor" class="legend-editor"></div>
-            </div>
-          </details>
-          <details>
-            <summary>Fit</summary>
-            <div class="settings-row">
-              <label class="checkbox-label">
-                <input id="fitEnabledInput" type="checkbox" />
-                <span>Show fit</span>
-              </label>
-              <label>
-                <span>Fit model</span>
-                <select id="fitModelInput">
-                  <option value="gaussian" selected>Gaussian</option>
-                  <option value="exponential">Exponential</option>
-                  <option value="pol0">pol0 constant</option>
-                  <option value="pol1">pol1 linear</option>
-                  <option value="pol2">pol2 quadratic</option>
-                  <option value="pol3">pol3 cubic</option>
-                  <option value="pol4">pol4</option>
-                  <option value="pol5">pol5</option>
-                  <option value="pol6">pol6</option>
-                </select>
-              </label>
-              <label>
-                <span>Fit X min</span>
-                <input id="fitXMinInput" type="number" step="any" placeholder="auto" />
-              </label>
-              <label>
-                <span>Fit X max</span>
-                <input id="fitXMaxInput" type="number" step="any" placeholder="auto" />
-              </label>
             </div>
           </details>
           <details>
@@ -340,6 +318,69 @@
               </label>
             </div>
           </details>
+          <details>
+            <summary>Diagnostics</summary>
+            <div class="diagnostics">
+              <button id="copyDiagnosticsButton" class="ghost-button" type="button">Copy debug info</button>
+              <pre id="diagnosticsOutput">No errors yet.</pre>
+            </div>
+          </details>
+        </div>
+        <div id="analysisTab" class="settings tab-pane">
+          <details open>
+            <summary>Fit</summary>
+            <div class="settings-row">
+              <label class="checkbox-label">
+                <input id="fitEnabledInput" type="checkbox" />
+                <span>Show fit</span>
+              </label>
+              <label>
+                <span>Fit model</span>
+                <select id="fitModelInput">
+                  <option value="gaussian" selected>Gaussian</option>
+                  <option value="exponential">Exponential</option>
+                  <option value="pol0">pol0 constant</option>
+                  <option value="pol1">pol1 linear</option>
+                  <option value="pol2">pol2 quadratic</option>
+                  <option value="pol3">pol3 cubic</option>
+                  <option value="pol4">pol4</option>
+                  <option value="pol5">pol5</option>
+                  <option value="pol6">pol6</option>
+                </select>
+              </label>
+              <label>
+                <span>Fit X min</span>
+                <input id="fitXMinInput" type="number" step="any" placeholder="auto" />
+              </label>
+              <label>
+                <span>Fit X max</span>
+                <input id="fitXMaxInput" type="number" step="any" placeholder="auto" />
+              </label>
+            </div>
+          </details>
+          <details open>
+            <summary>Range integral</summary>
+            <div class="settings-row">
+              <label>
+                <span>Analysis X min</span>
+                <input id="analysisXMinInput" type="number" step="any" placeholder="auto" />
+              </label>
+              <label>
+                <span>Analysis X max</span>
+                <input id="analysisXMaxInput" type="number" step="any" placeholder="auto" />
+              </label>
+            </div>
+          </details>
+          <details open>
+            <summary>Results</summary>
+            <div id="analysisResults" class="analysis-results">Select a 1D object</div>
+          </details>
+          <details open>
+            <summary>Warnings</summary>
+            <ul id="analysisWarnings" class="analysis-warnings">
+              <li>No object selected</li>
+            </ul>
+          </details>
         </div>
       </section>
 
@@ -359,10 +400,20 @@
               Load style
               <input id="styleFileInput" type="file" accept=".json,application/json" />
             </label>
+            <button id="saveProjectButton" class="ghost-button" type="button">Save project</button>
+            <label class="ghost-button">
+              Load project
+              <input id="projectFileInput" type="file" accept=".json,application/json" />
+            </label>
           </div>
         </div>
         <div class="plot-frame">
-          <img id="plotImage" alt="" />
+          <div class="plot-image-wrap">
+            <img id="plotImage" alt="" />
+            <div id="selectionOverlay" class="selection-overlay" hidden>
+              <div id="selectionBox" class="selection-box"></div>
+            </div>
+          </div>
           <div id="summaryLine" class="summary-line"></div>
         </div>
       </section>

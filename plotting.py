@@ -9,6 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
+from matplotlib.ticker import FuncFormatter
 
 
 @dataclass
@@ -72,16 +73,11 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
         apply_ranges_and_scale(ax, options)
         style_axes(ax, options)
         add_summary_to_figure(fig, options)
-        fig.tight_layout()
+        safe_tight_layout(fig)
         if options.include_summary and options.summary_text:
             fig.subplots_adjust(bottom=0.16)
         buffer = BytesIO()
-        fig.savefig(
-            buffer,
-            format=image_format,
-            bbox_inches="tight",
-            facecolor=fig.get_facecolor(),
-        )
+        save_figure(fig, buffer, image_format)
         plt.close(fig)
     return buffer.getvalue()
 
@@ -90,8 +86,115 @@ def render_histogram_png(hist, options: PlotOptions | None = None) -> bytes:
     return render_histogram(hist, options, "png")
 
 
+def save_figure(fig, buffer: BytesIO, image_format: str) -> None:
+    try:
+        write_figure(fig, buffer, image_format)
+    except Exception:
+        strip_mathtext_from_figure(fig)
+        buffer.seek(0)
+        buffer.truncate(0)
+        try:
+            write_figure(fig, buffer, image_format)
+        except Exception:
+            strip_text_to_ascii(fig)
+            buffer.seek(0)
+            buffer.truncate(0)
+            write_figure(fig, buffer, image_format)
+
+
+def write_figure(fig, buffer: BytesIO, image_format: str) -> None:
+    fig.savefig(
+        buffer,
+        format=image_format,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
+
+
+def safe_tight_layout(fig) -> None:
+    try:
+        fig.tight_layout()
+    except Exception:
+        strip_mathtext_from_figure(fig)
+        try:
+            fig.tight_layout()
+        except Exception:
+            strip_text_to_ascii(fig)
+            fig.tight_layout()
+
+
+def safe_canvas_draw(fig) -> None:
+    try:
+        fig.canvas.draw()
+    except Exception:
+        strip_mathtext_from_figure(fig)
+        try:
+            fig.canvas.draw()
+        except Exception:
+            strip_text_to_ascii(fig)
+            fig.canvas.draw()
+
+
+def strip_mathtext_from_figure(fig) -> None:
+    for text in fig.findobj(match=matplotlib.text.Text):
+        text.set_text(plain_root_text(text.get_text()))
+
+
+def strip_text_to_ascii(fig) -> None:
+    for text in fig.findobj(match=matplotlib.text.Text):
+        text.set_text(ascii_safe_text(text.get_text()))
+
+
+def plot_metadata(obj, options: PlotOptions | None = None) -> dict:
+    options = options or PlotOptions()
+    kind = plot_kind(obj)
+    plt.style.use("default")
+    fig_width, fig_height = figure_size(options.aspect_ratio)
+    with style_context(options):
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+        fig.patch.set_facecolor(options.figure_facecolor)
+        ax.set_facecolor(options.axes_facecolor)
+        draw_object(ax, obj, options, kind)
+        apply_ranges_and_scale(ax, options)
+        style_axes(ax, options)
+        safe_tight_layout(fig)
+        safe_canvas_draw(fig)
+        bbox = ax.get_position()
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
+        metadata = {
+            "kind": kind,
+            "xMin": float(x_min),
+            "xMax": float(x_max),
+            "yMin": float(y_min),
+            "yMax": float(y_max),
+            "axesBox": axes_box_for_saved_image(fig, bbox),
+            "aspectRatio": float(options.aspect_ratio),
+        }
+        plt.close(fig)
+    return metadata
+
+
+def axes_box_for_saved_image(fig, axes_bbox) -> dict:
+    renderer = fig.canvas.get_renderer()
+    tight_bbox = fig.get_tightbbox(renderer)
+    fig_width, fig_height = fig.get_size_inches()
+    left = (axes_bbox.x0 * fig_width - tight_bbox.x0) / tight_bbox.width
+    bottom = (axes_bbox.y0 * fig_height - tight_bbox.y0) / tight_bbox.height
+    width = axes_bbox.width * fig_width / tight_bbox.width
+    height = axes_bbox.height * fig_height / tight_bbox.height
+    return {
+        "left": float(left),
+        "bottom": float(bottom),
+        "width": float(width),
+        "height": float(height),
+    }
+
+
 def plot_kind(obj) -> str:
     class_name = obj.classname
+    if class_name.startswith("TProfile2D"):
+        return "TProfile2D"
     if class_name.startswith("TProfile"):
         return "TProfile"
     if class_name.startswith("TH2"):
@@ -105,6 +208,8 @@ def draw_object(ax, obj, options: PlotOptions, kind: str | None = None) -> None:
     kind = kind or plot_kind(obj)
     if kind == "TH2":
         draw_th2(ax, obj, options)
+    elif kind == "TProfile2D":
+        draw_tprofile2d(ax, obj, options)
     elif kind == "TGraph":
         draw_tgraph(ax, obj, options)
     elif kind == "TProfile":
@@ -164,7 +269,7 @@ def draw_th1(ax, hist, options: PlotOptions) -> None:
 
 
 def draw_tprofile(ax, hist, options: PlotOptions) -> None:
-    values, edges = hist.to_numpy()
+    values, edges = profile_numpy(hist)
     centers = 0.5 * (edges[:-1] + edges[1:])
     errors = profile_errors(hist, values)
 
@@ -205,6 +310,49 @@ def profile_errors(hist, values):
     return np.zeros_like(values, dtype=float)
 
 
+def profile_numpy(hist):
+    try:
+        return hist.to_numpy()
+    except Exception:
+        pass
+    try:
+        return np.asarray(hist.values(flow=False), dtype=float), np.asarray(hist.axis().edges(), dtype=float)
+    except Exception:
+        pass
+
+    bin_entries = np.asarray(hist.member("fBinEntries"), dtype=float)
+    try:
+        array = np.asarray(hist.member("fArray"), dtype=float)
+    except Exception:
+        array = np.asarray(hist.member("fSumw2"), dtype=float)
+    n_bins, x_min, x_max = axis_edges_from_member(hist.member("fXaxis"))
+    start = 1
+    stop = start + n_bins
+    sums = array[start:stop]
+    entries = bin_entries[start:stop]
+    values = np.divide(sums, entries, out=np.zeros_like(sums, dtype=float), where=entries != 0)
+    try:
+        x_bins = np.asarray(hist.member("fXaxis").member("fXbins"), dtype=float)
+        if len(x_bins) == n_bins + 1:
+            return values, x_bins
+    except Exception:
+        pass
+    return values, np.linspace(x_min, x_max, n_bins + 1)
+
+
+def axis_edges_from_member(axis):
+    n_bins = int(axis.member("fNbins"))
+    x_min = float(axis.member("fXmin"))
+    x_max = float(axis.member("fXmax"))
+    try:
+        x_bins = np.asarray(axis.member("fXbins"), dtype=float)
+        if len(x_bins) == n_bins + 1:
+            return n_bins, float(x_bins[0]), float(x_bins[-1])
+    except Exception:
+        pass
+    return n_bins, x_min, x_max
+
+
 def draw_th2(ax, hist, options: PlotOptions) -> None:
     values, x_edges, y_edges = hist.to_numpy()
     masked = np.ma.masked_where(values.T <= 0, values.T)
@@ -228,6 +376,68 @@ def draw_th2(ax, hist, options: PlotOptions) -> None:
     cbar.outline.set_edgecolor(options.axis_color)
 
     apply_labels(ax, hist, options, default_y_label="y")
+
+
+def draw_tprofile2d(ax, hist, options: PlotOptions) -> None:
+    values, x_edges, y_edges = profile2d_numpy(hist)
+    masked = np.ma.masked_invalid(values.T)
+    masked = np.ma.masked_where(values.T == 0, masked)
+
+    cmap = selected_colormap(options.colormap)
+    cmap.set_bad("white")
+    norm = color_norm(masked, options)
+    mesh = ax.pcolormesh(
+        x_edges,
+        y_edges,
+        masked,
+        cmap=cmap,
+        norm=norm,
+        vmin=None if norm else options.z_min,
+        vmax=None if norm else options.z_max,
+        shading="auto",
+    )
+    cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
+    cbar.set_label("Profile", color=options.text_color, fontsize=options.label_font_size)
+    cbar.ax.tick_params(labelsize=options.tick_font_size, colors=options.axis_color)
+    cbar.outline.set_edgecolor(options.axis_color)
+    apply_labels(ax, hist, options, default_y_label="y")
+
+
+def profile2d_numpy(hist):
+    try:
+        values = np.asarray(hist.values(flow=False), dtype=float)
+        x_edges = np.asarray(hist.axis(0).edges(), dtype=float)
+        y_edges = np.asarray(hist.axis(1).edges(), dtype=float)
+        return values, x_edges, y_edges
+    except Exception:
+        pass
+
+    x_axis = hist.member("fXaxis")
+    y_axis = hist.member("fYaxis")
+    nx = int(x_axis.member("fNbins"))
+    ny = int(y_axis.member("fNbins"))
+    x_edges = axis_edges(x_axis)
+    y_edges = axis_edges(y_axis)
+    entries = np.asarray(hist.member("fBinEntries"), dtype=float)
+    sums = np.asarray(hist.member("fSumw2"), dtype=float)
+    values = np.zeros((nx, ny), dtype=float)
+    for ix in range(nx):
+        for iy in range(ny):
+            index = (nx + 2) * (iy + 1) + (ix + 1)
+            if index < len(entries) and entries[index] != 0:
+                values[ix, iy] = sums[index] / entries[index]
+    return values, x_edges, y_edges
+
+
+def axis_edges(axis):
+    n_bins, x_min, x_max = axis_edges_from_member(axis)
+    try:
+        x_bins = np.asarray(axis.member("fXbins"), dtype=float)
+        if len(x_bins) == n_bins + 1:
+            return x_bins
+    except Exception:
+        pass
+    return np.linspace(x_min, x_max, n_bins + 1)
 
 
 def draw_tgraph(ax, graph, options: PlotOptions) -> None:
@@ -419,16 +629,11 @@ def render_compare_th1(
                 text.set_color(options.text_color)
 
         add_summary_to_figure(fig, options)
-        fig.tight_layout()
+        safe_tight_layout(fig)
         if options.include_summary and options.summary_text:
             fig.subplots_adjust(bottom=0.16)
         buffer = BytesIO()
-        fig.savefig(
-            buffer,
-            format=image_format,
-            bbox_inches="tight",
-            facecolor=fig.get_facecolor(),
-        )
+        save_figure(fig, buffer, image_format)
         plt.close(fig)
     return buffer.getvalue()
 
@@ -540,16 +745,11 @@ def render_panel(
             ax.axis("off")
 
         if global_title:
-            fig.suptitle(format_root_text(global_title), color=options.text_color, fontsize=options.title_font_size)
-        fig.tight_layout()
+            fig.suptitle(safe_label_text(global_title), color=options.text_color, fontsize=options.title_font_size)
+        safe_tight_layout(fig)
         fig.subplots_adjust(wspace=spacing, hspace=spacing)
         buffer = BytesIO()
-        fig.savefig(
-            buffer,
-            format=image_format,
-            bbox_inches="tight",
-            facecolor=fig.get_facecolor(),
-        )
+        save_figure(fig, buffer, image_format)
         plt.close(fig)
     return buffer.getvalue()
 
@@ -562,7 +762,13 @@ def panel_equal_limits(objects: list[tuple[str, object]]):
     for _, obj in objects:
         try:
             kind = plot_kind(obj)
-            if kind in {"TH1", "TProfile"}:
+            if kind == "TProfile":
+                values, edges = profile_numpy(obj)
+                x_min_values.append(float(edges[0]))
+                x_max_values.append(float(edges[-1]))
+                y_min_values.append(float(np.nanmin(values)))
+                y_max_values.append(float(np.nanmax(values)))
+            elif kind == "TH1":
                 values, edges = obj.to_numpy()
                 x_min_values.append(float(edges[0]))
                 x_max_values.append(float(edges[-1]))
@@ -578,7 +784,16 @@ def panel_equal_limits(objects: list[tuple[str, object]]):
             continue
     if not x_min_values or not y_min_values:
         return None
-    return min(x_min_values), max(x_max_values), min(y_min_values), max(y_max_values)
+    y_min = min(y_min_values)
+    y_max = max(y_max_values)
+    y_span = y_max - y_min
+    if y_span > 0:
+        y_max += y_span * 0.08
+    elif y_max > 0:
+        y_max *= 1.08
+    else:
+        y_max += 1.0
+    return min(x_min_values), max(x_max_values), y_min, y_max
 
 
 def normalize_th1(values, errors, widths, normalization: str):
@@ -709,6 +924,7 @@ def style_context(options: PlotOptions):
         {
             "font.family": "sans-serif",
             "font.sans-serif": font_stack(options.font_family),
+            "axes.formatter.use_mathtext": False,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "svg.fonttype": "none",
@@ -763,9 +979,9 @@ def apply_labels(ax, hist, options: PlotOptions, default_y_label: str) -> None:
     y_label = options.y_label if options.y_label is not None else axis_title(hist, 1) or default_y_label
     title = options.title if options.title is not None else member_text(hist, "fTitle")
 
-    ax.set_xlabel(format_root_text(x_label), fontsize=options.label_font_size)
-    ax.set_ylabel(format_root_text(y_label), fontsize=options.label_font_size)
-    ax.set_title(format_root_text(title), pad=12, fontsize=options.title_font_size)
+    ax.set_xlabel(safe_label_text(x_label), fontsize=options.label_font_size)
+    ax.set_ylabel(safe_label_text(y_label), fontsize=options.label_font_size)
+    ax.set_title(safe_label_text(title), pad=12, fontsize=options.title_font_size)
     ax.xaxis.label.set_color(options.text_color)
     ax.yaxis.label.set_color(options.text_color)
     ax.title.set_color(options.text_color)
@@ -813,9 +1029,11 @@ def normalize_image_format(image_format: str) -> str:
 def apply_ranges_and_scale(ax, options: PlotOptions) -> None:
     if options.x_scale == "log":
         ax.set_xscale("log")
+        ax.xaxis.set_major_formatter(FuncFormatter(plain_log_tick))
 
     if options.y_scale == "log":
         ax.set_yscale("log")
+        ax.yaxis.set_major_formatter(FuncFormatter(plain_log_tick))
 
     if options.x_min is not None or options.x_max is not None:
         ax.set_xlim(left=options.x_min, right=options.x_max)
@@ -827,6 +1045,15 @@ def apply_ranges_and_scale(ax, options: PlotOptions) -> None:
         if bottom <= 0:
             bottom = find_positive_bottom(ax)
         ax.set_ylim(bottom=bottom, top=top)
+
+
+def plain_log_tick(value, _position=None) -> str:
+    if value <= 0 or not np.isfinite(value):
+        return ""
+    exponent = np.log10(value)
+    if np.isclose(exponent, round(exponent), atol=1e-10):
+        return f"1e{int(round(exponent))}"
+    return f"{value:.3g}"
 
 
 def find_positive_bottom(ax) -> float:
@@ -896,17 +1123,113 @@ def format_root_text(text: str) -> str:
     if not text:
         return ""
 
-    formatted = text
+    formatted = str(text).strip()
+    if not formatted:
+        return ""
+
+    if needs_full_math(formatted):
+        return f"${formatted}$"
+
     for root_symbol, math_symbol in sorted(ROOT_SYMBOLS.items(), key=lambda item: len(item[0]), reverse=True):
         formatted = formatted.replace(root_symbol, f"${math_symbol}$")
 
-    formatted = formatted.replace("#", "\\")
-    formatted = re.sub(r"([A-Za-z0-9\\]+(?:[_^]\{[^{}]+\})+)", r"$\1$", formatted)
+    formatted = re.sub(r"#([A-Za-z]+)", r"\1", formatted)
+    formatted = re.sub(r"\$(\\[A-Za-z]+)\$([_^]\{[^{}]+\})", r"$\1\2$", formatted)
+    formatted = wrap_subscripts_outside_math(formatted)
     return wrap_remaining_math_commands(formatted)
+
+
+def safe_label_text(text: str) -> str:
+    formatted = format_root_text(text)
+    try:
+        from matplotlib.mathtext import MathTextParser
+
+        parser = MathTextParser("agg")
+        parser.parse(formatted)
+        return formatted
+    except Exception:
+        return plain_root_text(text)
+
+
+def needs_full_math(text: str) -> bool:
+    if "$" in text:
+        return False
+    return bool(re.search(r"[_^]\{[^{}]+\}", text) and re.search(r"[()/]", text))
+
+
+def plain_root_text(text: str) -> str:
+    plain = str(text or "")
+    for root_symbol, math_symbol in ROOT_SYMBOLS.items():
+        plain = plain.replace(root_symbol, math_symbol.replace("\\", ""))
+    return plain.replace("\\", "")
+
+
+def ascii_safe_text(text: str) -> str:
+    plain = plain_root_text(text)
+    return plain.encode("ascii", errors="ignore").decode("ascii")
+
+
+def wrap_subscripts_outside_math(text: str) -> str:
+    chunks = text.split("$")
+    for index in range(0, len(chunks), 2):
+        chunks[index] = re.sub(r"([A-Za-z0-9\\]+(?:[_^]\{[^{}]+\})+)", r"$\1$", chunks[index])
+    return "$".join(chunks)
 
 
 def wrap_remaining_math_commands(text: str) -> str:
     chunks = text.split("$")
     for index in range(0, len(chunks), 2):
-        chunks[index] = re.sub(r"(\\[A-Za-z]+)", r"$\1$", chunks[index])
+        chunks[index] = re.sub(r"\\([A-Za-z]+)", safe_math_command, chunks[index])
     return "$".join(chunks)
+
+
+def safe_math_command(match: re.Match) -> str:
+    command = match.group(1)
+    if command in SAFE_MATH_COMMANDS:
+        return f"$\\{command}$"
+    return command
+
+
+SAFE_MATH_COMMANDS = {
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "vartheta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "rho",
+    "sigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "varphi",
+    "chi",
+    "psi",
+    "omega",
+    "Gamma",
+    "Delta",
+    "Theta",
+    "Lambda",
+    "Xi",
+    "Pi",
+    "Sigma",
+    "Upsilon",
+    "Phi",
+    "Psi",
+    "Omega",
+    "pm",
+    "times",
+    "rightarrow",
+    "leftarrow",
+}

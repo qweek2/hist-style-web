@@ -4,7 +4,7 @@ import numpy as np
 import uproot
 
 
-SUPPORTED_KINDS = ("TH1", "TH2", "TProfile", "TGraph")
+SUPPORTED_KINDS = ("TH1", "TH2", "TProfile", "TProfile2D", "TGraph")
 
 
 def list_histograms(root_path: Path) -> list[dict]:
@@ -37,7 +37,7 @@ def get_histogram(root_path: Path, hist_path: str):
 def histogram_summary(root_path: Path, hist_path: str) -> dict:
     hist = get_histogram(root_path, hist_path)
     kind = histogram_kind(hist.classname)
-    if kind == "TH2":
+    if kind in {"TH2", "TProfile2D"}:
         return th2_summary(hist)
     if kind == "TGraph":
         return tgraph_summary(hist)
@@ -55,7 +55,7 @@ def object_info(root_path: Path, hist_path: str) -> dict:
     }
 
     if kind in {"TH1", "TProfile"}:
-        values, edges = obj.to_numpy()
+        values, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
         info.update(
             {
                 "binsX": int(len(values)),
@@ -66,8 +66,8 @@ def object_info(root_path: Path, hist_path: str) -> dict:
                 "entries": member_float(obj, "fEntries"),
             }
         )
-    elif kind == "TH2":
-        values, x_edges, y_edges = obj.to_numpy()
+    elif kind in {"TH2", "TProfile2D"}:
+        values, x_edges, y_edges = profile2d_numpy(obj) if kind == "TProfile2D" else obj.to_numpy()
         info.update(
             {
                 "binsX": int(values.shape[0]),
@@ -96,14 +96,15 @@ def object_info(root_path: Path, hist_path: str) -> dict:
 
 
 def th1_summary(hist) -> dict:
-    values, edges = hist.to_numpy()
+    kind = histogram_kind(hist.classname)
+    values, edges = profile_numpy(hist) if kind == "TProfile" else hist.to_numpy()
     centers = 0.5 * (edges[:-1] + edges[1:])
     integral = float(np.sum(values))
     mean = weighted_mean(centers, values)
     rms = weighted_rms(centers, values, mean)
 
     return {
-        "kind": "TH1",
+        "kind": kind or "TH1",
         "entries": member_float(hist, "fEntries"),
         "integral": integral,
         "mean": mean,
@@ -112,7 +113,8 @@ def th1_summary(hist) -> dict:
 
 
 def th2_summary(hist) -> dict:
-    values, x_edges, y_edges = hist.to_numpy()
+    kind = histogram_kind(hist.classname)
+    values, x_edges, y_edges = profile2d_numpy(hist) if kind == "TProfile2D" else hist.to_numpy()
     x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
     y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
     integral = float(np.sum(values))
@@ -122,7 +124,7 @@ def th2_summary(hist) -> dict:
     mean_y = weighted_mean(y_centers, y_weights)
 
     return {
-        "kind": "TH2",
+        "kind": kind or "TH2",
         "entries": member_float(hist, "fEntries"),
         "integral": integral,
         "meanX": mean_x,
@@ -204,6 +206,8 @@ def axis_title(obj, axis_index: int) -> str:
 
 
 def histogram_kind(class_name: str) -> str | None:
+    if class_name.startswith("TProfile2D"):
+        return "TProfile2D"
     if class_name.startswith("TProfile"):
         return "TProfile"
     if class_name.startswith("TH2"):
@@ -213,6 +217,72 @@ def histogram_kind(class_name: str) -> str | None:
     if class_name.startswith("TGraph"):
         return "TGraph"
     return None
+
+
+def profile_numpy(hist):
+    try:
+        return hist.to_numpy()
+    except Exception:
+        pass
+    try:
+        return np.asarray(hist.values(flow=False), dtype=float), np.asarray(hist.axis().edges(), dtype=float)
+    except Exception:
+        pass
+
+    bin_entries = np.asarray(hist.member("fBinEntries"), dtype=float)
+    try:
+        array = np.asarray(hist.member("fArray"), dtype=float)
+    except Exception:
+        array = np.asarray(hist.member("fSumw2"), dtype=float)
+    axis = hist.member("fXaxis")
+    n_bins = int(axis.member("fNbins"))
+    sums = array[1 : n_bins + 1]
+    entries = bin_entries[1 : n_bins + 1]
+    values = np.divide(sums, entries, out=np.zeros_like(sums, dtype=float), where=entries != 0)
+    try:
+        edges = np.asarray(axis.member("fXbins"), dtype=float)
+        if len(edges) == n_bins + 1:
+            return values, edges
+    except Exception:
+        pass
+    return values, np.linspace(float(axis.member("fXmin")), float(axis.member("fXmax")), n_bins + 1)
+
+
+def profile2d_numpy(hist):
+    try:
+        values = np.asarray(hist.values(flow=False), dtype=float)
+        x_edges = np.asarray(hist.axis(0).edges(), dtype=float)
+        y_edges = np.asarray(hist.axis(1).edges(), dtype=float)
+        return values, x_edges, y_edges
+    except Exception:
+        pass
+
+    x_axis = hist.member("fXaxis")
+    y_axis = hist.member("fYaxis")
+    nx = int(x_axis.member("fNbins"))
+    ny = int(y_axis.member("fNbins"))
+    x_edges = axis_edges(x_axis)
+    y_edges = axis_edges(y_axis)
+    entries = np.asarray(hist.member("fBinEntries"), dtype=float)
+    sums = np.asarray(hist.member("fSumw2"), dtype=float)
+    values = np.zeros((nx, ny), dtype=float)
+    for ix in range(nx):
+        for iy in range(ny):
+            index = (nx + 2) * (iy + 1) + (ix + 1)
+            if index < len(entries) and entries[index] != 0:
+                values[ix, iy] = sums[index] / entries[index]
+    return values, x_edges, y_edges
+
+
+def axis_edges(axis):
+    n_bins = int(axis.member("fNbins"))
+    try:
+        edges = np.asarray(axis.member("fXbins"), dtype=float)
+        if len(edges) == n_bins + 1:
+            return edges
+    except Exception:
+        pass
+    return np.linspace(float(axis.member("fXmin")), float(axis.member("fXmax")), n_bins + 1)
 
 
 def read_title(root_file, hist_path: str) -> str:

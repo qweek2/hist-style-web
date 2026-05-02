@@ -1,46 +1,56 @@
 # Histogram Style Web
 
-Histogram Style Web is a small local-first web application for turning CERN ROOT
-histograms into cleaner, publication-ready plots rendered with Matplotlib.
+**Histogram Style Web** is a browser-based tool for turning CERN ROOT histograms
+and graphs into clean, reproducible, publication-ready figures.
 
-It reads `.root` files with `uproot`, detects common histogram and graph
-objects, and lets you preview, restyle, compare, fit, arrange, and export them
-from a browser.
+It is built for physicists, analysts, students, and collaborators who need to
+move quickly from a `.root` file to plots suitable for slides, notes, papers,
+internal reviews, and reports without manually tuning ROOT canvases every time.
 
-The app is designed for physicists and analysts who often need the same ROOT
-histograms in slides, notes, papers, and reports, but do not want to keep
-manually tuning ROOT canvas styles.
+The app runs locally in your browser, reads ROOT files with `uproot`, renders
+figures with Matplotlib, and gives you a compact workflow for styling,
+comparison, multi-panel figures, analysis, fitting, and export.
 
-## Local Installation
+## What You Can Do
+
+- Drag and drop a `.root` file into the browser.
+- Browse supported ROOT objects recursively.
+- Render `TH1`, `TH2`, `TProfile`, `TProfile2D`, and `TGraph` objects.
+- Apply built-in publication and presentation style presets.
+- Customize labels, fonts, colors, line styles, markers, axis ranges, log
+  scales, DPI, aspect ratio, colormaps, and normalization.
+- Compare multiple 1D histograms or profiles as overlays, ratios,
+  differences, or percent differences.
+- Build and preview multi-panel figures before exporting.
+- Run lightweight analysis on selected 1D ranges.
+- Add quick visual fits and inspect fit quality summaries.
+- Export single plots, comparison plots, panel figures, or all objects.
+- Save and reload reproducible project JSON files.
+
+## Quick Start
 
 ### 1. Install Python
 
-Install Python 3.10 or newer. Python 3.12 is recommended.
-
-Check that Python is available:
+Use Python 3.10 or newer. Python 3.12 is recommended.
 
 ```bash
 python --version
 ```
 
-On some Linux/macOS systems the command may be:
+On some Linux/macOS systems:
 
 ```bash
 python3 --version
 ```
 
-### 2. Download the project
-
-Clone the repository:
+### 2. Clone the Repository
 
 ```bash
 git clone https://github.com/qweek2/hist-style-web.git
 cd hist-style-web
 ```
 
-Or download it as a ZIP archive from GitHub and unpack it.
-
-### 3. Create a virtual environment
+### 3. Create a Virtual Environment
 
 Windows PowerShell:
 
@@ -56,109 +66,39 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 4. Install dependencies
+### 4. Install Dependencies
 
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-This installs:
-
-- FastAPI and Uvicorn for the local web server
-- uproot for reading ROOT files
-- NumPy for histogram data handling
-- Matplotlib for rendering plots
-
-### 5. Run the app
+### 5. Run the App
 
 ```bash
 uvicorn app:app --reload
 ```
 
-Open this URL in your browser:
+Open:
 
 ```text
-http://localhost:8000
+http://127.0.0.1:8000
 ```
 
-Now drag and drop a `.root` file into the page.
+Then drag and drop a `.root` file into the upload area.
 
-## Quick Usage
+If the interface looks stale after updating the project, refresh the browser
+with `Ctrl+F5`.
 
-1. Drop a ROOT file into the upload area.
-2. Select a histogram from the list.
-3. Adjust style settings in the middle settings panel.
-4. Export the current plot as PNG, PDF, or SVG.
-5. Use `Export all` to download all histograms as a ZIP archive.
+## Typical Workflow
 
-## Features
-
-- Drag-and-drop `.root` file upload
-- Recursive discovery of `TH1*`, `TH2*`, `TProfile*`, and `TGraph*` objects
-- Clean Matplotlib rendering
-- PNG, PDF, and SVG export
-- Batch export to ZIP
-- Per-histogram custom style overrides
-- Save/load style presets as JSON
-- Search/filter histograms by name
-- Object information panel with ROOT class, title, entries, ranges, bins, or points
-- Compare multiple `TH1`/`TProfile` objects on one plot
-- Advanced comparison modes:
-  - overlay
-  - ratio to the first selected object
-  - difference from the first selected object
-  - relative difference in percent
-- Edit legend labels for comparison plots
-- Per-curve compare styling:
-  - automatic or custom color
-  - line style
-  - marker
-  - alpha/transparency
-- Optional uncertainty band for the reference curve
-- Preview and export selected objects as a multi-panel figure
-- Multi-panel controls:
-  - number of columns
-  - shared X/Y axes
-  - equal ranges
-  - panel titles
-  - global panel title
-  - subplot spacing
-- Optional error bars
-- Linear/log scale controls for X, Y, and Z/color scale
-- Manual axis ranges for X, Y, and Z
-- Aspect ratio control, for example `1:1`, `4:3`, `16:9`
-- Summary line with entries, integral, mean, and RMS
-- Optional summary embedded into exported images
-- Optional fit overlay for 1D objects
-- Independent fit range controls for X
-- Fit models:
-  - Gaussian
-  - exponential
-  - pol0, pol1, pol2, pol3, pol4, pol5, pol6
-- TH1 normalization modes:
-  - raw
-  - area = 1
-  - max = 1
-  - divide by bin width
-
-## Style Presets
-
-The app includes several built-in style presets:
-
-- `Journal`
-- `Presentation`
-- `HEP`
-- `Nature-like`
-- `Dark slides`
-
-The presets configure fonts, line widths, font sizes, colors, tick direction,
-colormaps, and export-friendly defaults.
-
-The journal-oriented presets use conservative sans-serif font stacks such as
-Arial, Helvetica, Liberation Sans, and DejaVu Sans. The Docker image installs
-Liberation fonts so that deployed Linux environments have a stable Arial-like
-fallback.
+1. Upload or open a ROOT file.
+2. Select an object from the list on the left.
+3. Use the `Render` tab to tune the plot style.
+4. Use the `Analysis` tab for range integrals, fits, and warnings.
+5. Select multiple objects for comparison or panel figures.
+6. Export the result as `PNG`, `PDF`, or `SVG`.
+7. Save a project JSON when you need reproducibility.
 
 ## Supported ROOT Objects
 
@@ -166,19 +106,17 @@ Currently supported:
 
 - `TH1*`
 - `TH2*`
-- `TProfile*`
+- `TProfile`
+- `TProfile2D`
 - `TGraph*`
 
-Examples:
+Common examples:
 
-- `TH1F`
-- `TH1D`
-- `TH2F`
-- `TH2D`
+- `TH1F`, `TH1D`
+- `TH2F`, `TH2D`
 - `TProfile`
-- `TGraph`
-- `TGraphErrors`
-- `TGraphAsymmErrors`
+- `TProfile2D`
+- `TGraph`, `TGraphErrors`, `TGraphAsymmErrors`
 
 Not yet supported:
 
@@ -186,46 +124,238 @@ Not yet supported:
 - `TEfficiency`
 - saved `TCanvas` styling
 
+## Rendering and Styling
+
+Histogram Style Web exposes the figure settings that usually matter for real
+scientific plots:
+
+- DPI: `100`, `150`, `200`, `250`, `300`, `400`
+- aspect ratio, including `1:1`, `4:3`, `16:9`, `16:10`
+- linear/log scales for X, Y, and Z
+- manual X/Y/Z ranges
+- title, X label, Y label
+- title, label, and tick font sizes
+- font family
+- line color, width, style, alpha
+- marker style
+- optional error bars
+- optional uncertainty band
+- colormap
+- normalization mode
+- output format: `PNG`, `PDF`, `SVG`
+
+For 2D histograms and `TProfile2D`, zero-content regions are rendered with a
+white background so empty areas are not visually confused with real data.
+
+ROOT labels are sanitized before rendering. The app avoids blindly treating
+ROOT-style text as Matplotlib mathtext, which makes labels such as `\Deltay`,
+`E_{kin}`, and ratio-like expressions much more robust during export.
+
+## Style Presets
+
+Built-in presets:
+
+- `Journal`: clean default style for notes and reports.
+- `Presentation`: larger typography and slide-friendly proportions.
+- `HEP`: conservative high-energy-physics style.
+- `Nature-like`: compact publication-oriented styling.
+- `Dark slides`: dark theme for presentation figures.
+
+The presets configure typography, line weights, tick styling, colors,
+colormaps, and export-oriented defaults. Font stacks include common scientific
+and presentation-friendly fallbacks such as Arial, Helvetica, Liberation Sans,
+DejaVu Sans, Inter, Aptos, and Segoe UI.
+
 ## Compare Mode
 
-Select two or more `TH1*` or `TProfile*` objects using the checkboxes in the
-object list, then click `Compare selected`.
+Select two or more compatible `TH1` or `TProfile` objects with the checkboxes in
+the object list, then click `Compare selected`.
+
+Available comparison modes:
+
+- overlay
+- ratio to the first selected object
+- difference from the first selected object
+- percent difference from the first selected object
 
 The first selected object is used as the reference for ratio and difference
 plots. Ratio and difference modes require identical binning.
 
-Comparison plots support:
+Each curve can have its own:
 
-- custom legend labels
-- per-curve colors
-- solid/dashed/dash-dot/dotted line styles
-- optional markers
+- legend label
+- color, or automatic Matplotlib color
+- line style
+- marker style
 - alpha/transparency
-- optional uncertainty band for the reference curve
 
-If no per-curve color is selected, the app uses Matplotlib's automatic color
-cycle. By default, compare curves use solid lines, no markers, and alpha 1.
+By default, comparison curves use automatic colors, solid lines, no markers,
+and alpha `1`.
 
-## Fit Mode
+## Panel Figures
 
-Enable `Show fit` in the `Fit` section for a selected 1D object.
+Panel mode lets you compose several selected objects into one figure.
+
+Controls include:
+
+- number of columns
+- shared X axis
+- shared Y axis
+- equal ranges
+- panel titles
+- global panel title
+- subplot spacing
+
+Use `Preview panel` to inspect the multi-panel figure in the browser before
+exporting it. Equal-range panels include a small Y headroom so the highest bins
+do not touch the frame.
+
+## Analysis
+
+The `Analysis` tab provides a compact first-pass analysis view for 1D objects.
+
+It currently reports:
+
+- selected range integral
+- fraction of total integral inside the selected range
+- selected-range mean and RMS
+- entries and useful plot warnings
+- fit parameters when fitting is enabled
+- chi2/ndf
+- residual and pull summaries
+
+You can type `Analysis X min` and `Analysis X max` manually, or select a range
+directly on the plot by dragging across the histogram while the `Analysis` tab
+is active.
+
+Analysis v1 focuses on `TH1` and `TProfile`. Other supported objects still
+render normally, but advanced range statistics are intentionally limited until
+their semantics are handled explicitly.
+
+## Fits
+
+Fits are controlled from the `Analysis` tab.
 
 Available models:
 
 - Gaussian
 - exponential
-- polynomial fits from `pol0` to `pol6`
+- `pol0`
+- `pol1`
+- `pol2`
+- `pol3`
+- `pol4`
+- `pol5`
+- `pol6`
 
 `Fit X min` and `Fit X max` restrict the fit range without changing the visible
-plot range. Leave them empty to fit the full histogram range.
+axis range. Leave them empty to fit the available histogram range.
 
-The current fit implementation is a lightweight NumPy-based visual fit intended
-for quick presentation and inspection plots. It is not a replacement for a full
-statistical ROOT/Minuit fit with parameter errors and fit-quality diagnostics.
+The current fit implementation is intended for quick visual inspection and
+presentation plots. It is not a replacement for a full statistical ROOT/Minuit
+workflow with rigorous parameter uncertainties.
 
-## Local Privacy Notes
+## Summary Line
 
-When you run the app locally, your ROOT files stay on your own machine.
+The plot preview can show a compact summary line below the figure. It is meant
+to provide useful physics-oriented context without overwhelming the plot.
+
+Depending on the object type, it may include:
+
+- entries
+- integral
+- mean X and RMS X
+- mean Y and RMS Y when meaningful
+- min/max values
+
+Bin-count details are intentionally omitted from the summary line.
+
+## Reproducible Projects
+
+Use `Save project` to store the current plotting session as a JSON file.
+
+A project records:
+
+- project schema and creation time
+- source ROOT file name
+- optional source ROOT local path metadata
+- selected object
+- global render settings
+- per-object settings
+- compare selections
+- compare labels and per-curve styles
+- panel settings
+- analysis range
+- export format
+
+Project files do not contain ROOT data. To restore a session, load the same
+ROOT file and then choose `Load project`. If the project contains a local ROOT
+path and the app is running on the same machine, it can try to reopen that file
+automatically.
+
+Browsers do not expose the real path of a drag-and-dropped file. If you want a
+project to remember the local ROOT path, paste it into `Optional local ROOT
+path` or open the file through the local path input.
+
+## Export
+
+Supported export paths:
+
+- current single plot
+- current comparison plot
+- current panel figure
+- all discovered objects as a ZIP archive
+
+Supported formats:
+
+- `PNG`
+- `PDF`
+- `SVG`
+
+Recommended choices:
+
+- Papers: `PDF` or `SVG` for line plots, `PNG` at 300 DPI or higher for raster
+  output.
+- Presentations: `PNG` at 200-400 DPI, usually with `16:9` aspect ratio.
+- Dense 2D histograms: `PNG` is often safer because vector files can become
+  very large.
+
+## Diagnostics and Robustness
+
+The app includes frontend diagnostics for failed requests. When a render,
+analysis, export, compare, or project operation fails, the Diagnostics section
+can show copyable debug information including endpoint, payload, status, and
+message.
+
+The backend also validates common user-facing errors before rendering:
+
+- invalid ranges where min is greater than max
+- unsupported log scales with non-positive values
+- fits with too few points
+- compare ratio/difference requests with incompatible binning
+- unsupported fit usage in compare or panel mode
+
+Several ROOT/Matplotlib edge cases are handled defensively, including unsafe
+labels, mathtext parse failures, log tick formatting, and missing `to_numpy()`
+support for profiles.
+
+## Local ROOT Paths
+
+For local work, you can paste a filesystem path into `Optional local ROOT path`
+and open it through the backend. This is useful for reproducible project files
+because the project can remember where the ROOT file came from.
+
+This feature is controlled by:
+
+```text
+ALLOW_LOCAL_FILE_OPEN=1
+```
+
+It is enabled by default for local runs and disabled by default on Render.
+
+## Privacy
+
+When you run the app locally, ROOT files stay on your machine.
 
 Uploaded files are stored temporarily in:
 
@@ -233,29 +363,39 @@ Uploaded files are stored temporarily in:
 uploads/
 ```
 
-They are ignored by Git.
+Generated exports are stored in:
 
-## Server Settings
+```text
+exports/
+```
 
-The app supports these environment variables:
+Both directories are ignored by Git.
+
+## Configuration
+
+Environment variables:
 
 ```text
 MAX_UPLOAD_MB=200
 UPLOAD_TTL_SECONDS=3600
+ALLOW_LOCAL_FILE_OPEN=1
 ```
 
 `MAX_UPLOAD_MB` limits uploaded ROOT file size.
 
 `UPLOAD_TTL_SECONDS` controls how long uploaded files are kept before automatic
-cleanup. The default is one hour.
+cleanup.
 
-Example:
+`ALLOW_LOCAL_FILE_OPEN` controls whether the backend can open a ROOT file from
+a local filesystem path.
+
+Example on Linux/macOS:
 
 ```bash
 MAX_UPLOAD_MB=500 UPLOAD_TTL_SECONDS=7200 uvicorn app:app
 ```
 
-Windows PowerShell:
+Example on Windows PowerShell:
 
 ```powershell
 $env:MAX_UPLOAD_MB="500"
@@ -265,13 +405,13 @@ uvicorn app:app
 
 ## Docker
 
-Build the Docker image:
+Build:
 
 ```bash
 docker build -t hist-style-web .
 ```
 
-Run it:
+Run:
 
 ```bash
 docker run --rm -p 8000:10000 hist-style-web
@@ -280,53 +420,36 @@ docker run --rm -p 8000:10000 hist-style-web
 Open:
 
 ```text
-http://localhost:8000
+http://127.0.0.1:8000
 ```
 
 ## Deploying to Render
 
-This repository includes:
+The repository includes:
 
 - `Dockerfile`
 - `render.yaml`
 
-To deploy on Render:
+Deploy flow:
 
-1. Push this repository to GitHub.
-2. Open Render.
-3. Create a new Blueprint or Web Service from the repository.
-4. Use the Docker runtime.
-5. Select the free plan if appropriate.
+1. Push the repository to GitHub.
+2. Create a Render Blueprint or Web Service from the repository.
+3. Use the Docker runtime.
+4. Configure environment variables if needed.
+5. Deploy.
 
-The app automatically reads Render's `PORT` environment variable.
+The app reads Render's `PORT` environment variable automatically.
 
-Useful Render environment variables:
+Useful Render settings:
 
 ```text
 MAX_UPLOAD_MB=200
 UPLOAD_TTL_SECONDS=3600
+ALLOW_LOCAL_FILE_OPEN=0
 ```
 
-Important: free Render instances spin down after inactivity. The first request
-after a sleep period may take around 30-60 seconds.
-
-## Recommended Export Formats
-
-For papers:
-
-- PDF or SVG for line plots
-- PNG at 300 DPI or higher if raster output is needed
-
-For presentations:
-
-- PNG at 200-300 DPI
-- 16:9 aspect ratio
-- `Presentation` or `Dark slides` preset
-
-For 2D histograms:
-
-- PNG is often safer for dense heatmaps
-- PDF/SVG can become large for very fine binning
+Render free instances sleep after inactivity. The first request after sleep can
+take 30-60 seconds or more.
 
 ## Development
 
@@ -334,6 +457,12 @@ Run with auto-reload:
 
 ```bash
 uvicorn app:app --reload
+```
+
+Basic import check:
+
+```bash
+python -c "import app, plotting, root_reader; print('imports ok')"
 ```
 
 Basic syntax check:
@@ -360,6 +489,43 @@ hist-style-web/
   render.yaml
 ```
 
+## Troubleshooting
+
+### The page did not update after pulling changes
+
+Use a hard refresh:
+
+```text
+Ctrl+F5
+```
+
+### Upload fails
+
+Check that the file extension is `.root` and that `MAX_UPLOAD_MB` is large
+enough for the file.
+
+### Log scale fails
+
+Log scales require positive values on the relevant axis. Use linear scale or
+set a positive manual range.
+
+### Compare ratio or difference fails
+
+Ratio and difference modes require identical binning. Use overlay mode for
+objects with different bin edges.
+
+### Export fails because of labels
+
+The app contains several fallback paths for ROOT label rendering. If a label
+still fails, simplify the title or axis label and copy the Diagnostics output
+for debugging.
+
+### Project does not reopen the ROOT file automatically
+
+Browsers do not expose drag-and-drop file paths. Upload the matching ROOT file
+manually, or run locally and use `Optional local ROOT path` before saving the
+project.
+
 ## License
 
-Add your preferred license here.
+No license has been declared yet.

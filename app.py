@@ -9,8 +9,9 @@ import zipfile
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+import numpy as np
 
-from plotting import PlotOptions, plot_kind, render_compare_th1, render_histogram, render_panel
+from plotting import PlotOptions, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
 from root_reader import get_histogram, histogram_summary, list_histograms, object_info
 
 
@@ -19,6 +20,7 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "200")) * 1024 * 1024
 UPLOAD_TTL_SECONDS = int(os.getenv("UPLOAD_TTL_SECONDS", "3600"))
+ALLOW_LOCAL_FILE_OPEN = os.getenv("ALLOW_LOCAL_FILE_OPEN", "0" if os.getenv("RENDER") else "1") == "1"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -57,6 +59,42 @@ async def upload_root_file(file: UploadFile = File(...)):
     return {"fileId": file_id, "histograms": histograms}
 
 
+@app.post("/api/open-local-root")
+def open_local_root_file(payload: dict):
+    if not ALLOW_LOCAL_FILE_OPEN:
+        raise HTTPException(status_code=403, detail="Opening local ROOT paths is disabled on this server")
+
+    raw_path = str(payload.get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="ROOT file path is empty")
+
+    try:
+        root_path = Path(raw_path).expanduser().resolve(strict=True)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"ROOT file path does not exist: {raw_path}") from exc
+
+    if root_path.suffix.lower() != ".root":
+        raise HTTPException(status_code=400, detail="Local path must point to a .root file")
+    if not root_path.is_file():
+        raise HTTPException(status_code=400, detail="Local ROOT path is not a file")
+
+    file_id = uuid4().hex
+    FILES[file_id] = root_path
+
+    try:
+        histograms = list_histograms(root_path)
+    except Exception as exc:
+        FILES.pop(file_id, None)
+        raise HTTPException(status_code=400, detail=f"Cannot read ROOT file: {exc}") from exc
+
+    return {
+        "fileId": file_id,
+        "histograms": histograms,
+        "rootFileName": root_path.name,
+        "rootFilePath": str(root_path),
+    }
+
+
 @app.get("/api/files/{file_id}/histograms")
 def histograms(file_id: str):
     root_path = file_path(file_id)
@@ -70,7 +108,7 @@ def histograms(file_id: str):
 def plot(
     file_id: str,
     path: str,
-    dpi: int = Query(default=200, ge=100, le=300),
+    dpi: int = Query(default=200, ge=100, le=400),
     aspect_ratio: str = "16:10",
     x_scale: str = Query(default="linear", pattern="^(linear|log)$"),
     y_scale: str = Query(default="linear", pattern="^(linear|log)$"),
@@ -154,6 +192,7 @@ def plot(
     )
     try:
         hist = get_histogram(root_path, path)
+        validate_plot_request(hist, options)
         image = render_histogram(hist, options, image_format)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -170,11 +209,45 @@ def summary(file_id: str, path: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/files/{file_id}/plot-metadata")
+def metadata(file_id: str, payload: dict):
+    root_path = file_path(file_id)
+    hist_path = payload.get("path")
+    if not hist_path:
+        raise HTTPException(status_code=400, detail="Object path is required")
+    try:
+        obj = get_histogram(root_path, hist_path)
+        options = options_from_settings(payload.get("settings", {}))
+        validate_plot_request(obj, options)
+        return plot_metadata(obj, options)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/files/{file_id}/info")
 def info(file_id: str, path: str):
     root_path = file_path(file_id)
     try:
         return object_info(root_path, path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/files/{file_id}/analysis")
+def analysis(file_id: str, payload: dict):
+    root_path = file_path(file_id)
+    hist_path = payload.get("path")
+    if not hist_path:
+        raise HTTPException(status_code=400, detail="Object path is required")
+
+    try:
+        obj = get_histogram(root_path, hist_path)
+        options = options_from_settings(payload.get("settings", {}))
+        x_min = optional_float(payload.get("xMin"))
+        x_max = optional_float(payload.get("xMax"))
+        if x_min is not None and x_max is not None and x_min >= x_max:
+            raise ValueError("Analysis X min must be smaller than Analysis X max")
+        return analysis_payload(obj, options, x_min, x_max)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -241,6 +314,7 @@ def compare(file_id: str, payload: dict):
             marker = markers[index] if index < len(markers) and markers[index] else None
             alpha = optional_float(alphas[index]) if index < len(alphas) and alphas[index] != "" else None
             histograms.append((label, hist, color, style, marker, alpha))
+        validate_compare_request(histograms, options)
         if options.include_summary:
             options.summary_text = f"Compared: {len(histograms)} histograms"
         image = render_compare_th1(histograms, options, image_format)
@@ -267,6 +341,8 @@ def panel(file_id: str, payload: dict):
         options = options_from_settings(payload.get("settings", {}))
         columns = int(payload.get("columns", 2))
         objects = [(path, get_histogram(root_path, path)) for path in paths]
+        for _, obj in objects:
+            validate_plot_request(obj, options, allow_fit=False)
         image = render_panel(
             objects,
             options,
@@ -356,6 +432,288 @@ def options_from_settings(settings: dict) -> PlotOptions:
         z_min=optional_float(settings.get("zMin")),
         z_max=optional_float(settings.get("zMax")),
     )
+
+
+def validate_plot_request(obj, options: PlotOptions, allow_fit: bool = True) -> None:
+    kind = plot_kind(obj)
+    validate_ranges(options)
+    if options.fit_enabled:
+        if not allow_fit:
+            raise ValueError("Fit is not available in panel export. Disable fit or export a single object.")
+        if kind not in {"TH1", "TProfile"}:
+            raise ValueError("Fit is supported for TH1 and TProfile objects only")
+        validate_fit_range(obj, options)
+    if options.x_scale == "log" and not has_positive_x(obj, kind):
+        raise ValueError("Log X scale requires positive X values")
+    if options.y_scale == "log" and not has_positive_y(obj, kind):
+        raise ValueError("Log Y scale requires positive Y values")
+    if options.z_scale == "log" and kind not in {"TH2", "TProfile2D"}:
+        raise ValueError("Log Z scale is available for TH2/TProfile2D objects only")
+    if options.z_scale == "log" and kind in {"TH2", "TProfile2D"} and not has_positive_z(obj):
+        raise ValueError("Log Z scale requires positive bin contents")
+
+
+def validate_compare_request(histograms: list[tuple], options: PlotOptions) -> None:
+    validate_ranges(options)
+    if options.fit_enabled:
+        raise ValueError("Fit is not available in compare mode. Disable fit or use a single object.")
+    if options.x_scale == "log":
+        for _, hist, *_ in histograms:
+            if not has_positive_x(hist, plot_kind(hist)):
+                raise ValueError("Log X scale requires positive X values for all compared objects")
+    if options.y_scale == "log":
+        for _, hist, *_ in histograms:
+            if not has_positive_y(hist, plot_kind(hist)):
+                raise ValueError("Log Y scale requires positive Y values for all compared objects")
+    if options.compare_mode != "overlay":
+        reference_edges = histograms[0][1].to_numpy()[1]
+        for _, hist, *_ in histograms[1:]:
+            edges = hist.to_numpy()[1]
+            if len(edges) != len(reference_edges) or not np.allclose(edges, reference_edges):
+                raise ValueError("Ratio/difference compare requires identical binning")
+
+
+def validate_ranges(options: PlotOptions) -> None:
+    range_pairs = [
+        ("X", options.x_min, options.x_max),
+        ("Y", options.y_min, options.y_max),
+        ("Z", options.z_min, options.z_max),
+        ("Fit X", options.fit_x_min, options.fit_x_max),
+    ]
+    for name, lower, upper in range_pairs:
+        if lower is not None and upper is not None and lower >= upper:
+            raise ValueError(f"{name} min must be smaller than {name} max")
+    if options.x_scale == "log" and options.x_min is not None and options.x_min <= 0:
+        raise ValueError("Log X scale requires X min to be positive")
+    if options.y_scale == "log" and options.y_min is not None and options.y_min <= 0:
+        raise ValueError("Log Y scale requires Y min to be positive")
+    if options.z_scale == "log" and options.z_min is not None and options.z_min <= 0:
+        raise ValueError("Log Z scale requires Z min to be positive")
+
+
+def validate_fit_range(obj, options: PlotOptions) -> None:
+    values, edges = profile_numpy(obj) if plot_kind(obj) == "TProfile" else obj.to_numpy()
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    mask = np.isfinite(values) & np.isfinite(centers)
+    if options.fit_x_min is not None:
+        mask &= centers >= options.fit_x_min
+    if options.fit_x_max is not None:
+        mask &= centers <= options.fit_x_max
+    required_points = fit_required_points(options.fit_model)
+    if np.count_nonzero(mask) < required_points:
+        raise ValueError(f"Fit range contains too few points for {options.fit_model}: need at least {required_points}")
+    if options.fit_model == "exponential" and np.count_nonzero(values[mask] > 0) < 2:
+        raise ValueError("Exponential fit requires at least two positive bins in the fit range")
+
+
+def fit_required_points(model: str) -> int:
+    match = re.fullmatch(r"pol([0-6])", model or "")
+    if match:
+        return int(match.group(1)) + 1
+    return {"linear": 2, "quadratic": 3, "cubic": 4}.get(model, 3)
+
+
+def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: float | None) -> dict:
+    kind = plot_kind(obj)
+    warnings = analysis_warnings(obj, kind, options)
+    payload = {
+        "kind": kind,
+        "range": {"xMin": x_min, "xMax": x_max},
+        "warnings": warnings,
+    }
+    if kind not in {"TH1", "TProfile"}:
+        payload["message"] = "Analysis v1 supports TH1 and TProfile objects"
+        return payload
+
+    values, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    mask = np.isfinite(values) & np.isfinite(centers)
+    if x_min is not None:
+        mask &= centers >= x_min
+    if x_max is not None:
+        mask &= centers <= x_max
+
+    selected_values = values[mask]
+    selected_centers = centers[mask]
+    selected_integral = float(np.sum(selected_values)) if len(selected_values) else 0.0
+    total_integral = float(np.sum(values))
+    selected_mean = weighted_mean(selected_centers, selected_values)
+    selected_rms = weighted_rms(selected_centers, selected_values, selected_mean)
+    payload["rangeStats"] = {
+        "bins": int(np.count_nonzero(mask)),
+        "integral": selected_integral,
+        "fraction": selected_integral / total_integral if total_integral else 0.0,
+        "mean": selected_mean,
+        "rms": selected_rms,
+    }
+
+    if options.fit_enabled:
+        payload["fit"] = fit_analysis(values, edges, options)
+    else:
+        payload["fit"] = {"enabled": False, "message": "Fit is disabled"}
+    return payload
+
+
+def fit_analysis(values, edges, options: PlotOptions) -> dict:
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    mask = np.isfinite(values) & np.isfinite(centers)
+    if options.fit_x_min is not None:
+        mask &= centers >= options.fit_x_min
+    if options.fit_x_max is not None:
+        mask &= centers <= options.fit_x_max
+
+    x_fit = centers[mask].astype(float)
+    y_fit = values[mask].astype(float)
+    required_points = fit_required_points(options.fit_model)
+    if len(x_fit) < required_points:
+        return {
+            "enabled": True,
+            "ok": False,
+            "message": f"Fit range contains too few points for {options.fit_model}: need at least {required_points}",
+        }
+
+    model = options.fit_model
+    order = polynomial_order(model)
+    parameters = []
+    if order is not None:
+        coeffs = np.polyfit(x_fit, y_fit, order)
+        y_model = np.polyval(coeffs, x_fit)
+        parameters = [{"name": f"p{index}", "value": float(value)} for index, value in enumerate(coeffs[::-1])]
+        label = f"pol{order}"
+    elif model == "exponential":
+        positive = y_fit > 0
+        if np.count_nonzero(positive) < 2:
+            return {"enabled": True, "ok": False, "message": "Exponential fit requires at least two positive bins"}
+        slope, intercept = np.polyfit(x_fit[positive], np.log(y_fit[positive]), 1)
+        y_model = np.exp(intercept + slope * x_fit)
+        parameters = [
+            {"name": "amplitude", "value": float(np.exp(intercept))},
+            {"name": "slope", "value": float(slope)},
+        ]
+        label = "exponential"
+    else:
+        total = float(np.sum(y_fit))
+        if total <= 0:
+            return {"enabled": True, "ok": False, "message": "Gaussian fit requires positive total content"}
+        mean = float(np.sum(x_fit * y_fit) / total)
+        sigma = float(np.sqrt(np.sum(y_fit * (x_fit - mean) ** 2) / total))
+        if sigma <= 0:
+            return {"enabled": True, "ok": False, "message": "Gaussian fit produced non-positive sigma"}
+        amplitude = float(np.max(y_fit))
+        y_model = amplitude * np.exp(-0.5 * ((x_fit - mean) / sigma) ** 2)
+        parameters = [
+            {"name": "amplitude", "value": amplitude},
+            {"name": "mean", "value": mean},
+            {"name": "sigma", "value": sigma},
+        ]
+        label = "gaussian"
+
+    errors = np.sqrt(np.clip(y_fit, 0, None))
+    valid_errors = errors > 0
+    residuals = y_fit - y_model
+    pulls = np.divide(residuals, errors, out=np.zeros_like(residuals), where=valid_errors)
+    chi2 = float(np.sum(pulls[valid_errors] ** 2)) if np.any(valid_errors) else 0.0
+    ndf = int(max(np.count_nonzero(valid_errors) - len(parameters), 0))
+    return {
+        "enabled": True,
+        "ok": True,
+        "model": label,
+        "points": int(len(x_fit)),
+        "parameters": parameters,
+        "chi2": chi2,
+        "ndf": ndf,
+        "chi2Ndf": chi2 / ndf if ndf else None,
+        "residualMean": float(np.mean(residuals)) if len(residuals) else 0.0,
+        "residualRms": float(np.std(residuals)) if len(residuals) else 0.0,
+        "pullMean": float(np.mean(pulls[valid_errors])) if np.any(valid_errors) else 0.0,
+        "pullRms": float(np.std(pulls[valid_errors])) if np.any(valid_errors) else 0.0,
+    }
+
+
+def analysis_warnings(obj, kind: str, options: PlotOptions) -> list[str]:
+    warnings = []
+    if kind == "TH2":
+        values, _, _ = obj.to_numpy()
+    elif kind == "TProfile2D":
+        values, _, _ = profile2d_numpy(obj)
+    elif kind == "TProfile":
+        values, _ = profile_numpy(obj)
+    elif kind == "TH1":
+        values, _ = obj.to_numpy()
+    elif kind == "TGraph":
+        x_values = np.asarray(obj.member("fX"), dtype=float)[: int(obj.member("fN"))]
+        y_values = np.asarray(obj.member("fY"), dtype=float)[: int(obj.member("fN"))]
+        values = y_values
+        if options.x_scale == "log" and np.any(x_values <= 0):
+            warnings.append("Log X scale hides or rejects non-positive X points")
+    else:
+        return [f"Unsupported object kind: {kind}"]
+
+    if np.any(np.asarray(values) < 0):
+        warnings.append("Object contains negative values")
+    if options.y_scale == "log" and np.any(np.asarray(values) <= 0):
+        warnings.append("Log Y scale hides or rejects non-positive values")
+    if options.normalization != "raw":
+        warnings.append(f"Normalization changes amplitudes: {options.normalization}")
+    if options.fit_enabled and kind not in {"TH1", "TProfile"}:
+        warnings.append("Fit is only available for TH1 and TProfile in Analysis v1")
+    return warnings
+
+
+def weighted_mean(centers, weights) -> float:
+    total = float(np.sum(weights))
+    if total == 0:
+        return 0.0
+    return float(np.sum(centers * weights) / total)
+
+
+def weighted_rms(centers, weights, mean: float) -> float:
+    total = float(np.sum(weights))
+    if total == 0:
+        return 0.0
+    variance = np.sum(((centers - mean) ** 2) * weights) / total
+    return float(np.sqrt(max(variance, 0.0)))
+
+
+def polynomial_order(model: str) -> int | None:
+    aliases = {"linear": 1, "quadratic": 2, "cubic": 3}
+    if model in aliases:
+        return aliases[model]
+    match = re.fullmatch(r"pol([0-6])", model or "")
+    return int(match.group(1)) if match else None
+
+
+def has_positive_x(obj, kind: str) -> bool:
+    if kind == "TGraph":
+        x_values = np.asarray(obj.member("fX"), dtype=float)[: int(obj.member("fN"))]
+        return bool(np.any(x_values > 0))
+    if kind == "TH2":
+        _, x_edges, _ = obj.to_numpy()
+        return bool(np.any(x_edges > 0))
+    if kind == "TProfile2D":
+        _, x_edges, _ = profile2d_numpy(obj)
+        return bool(np.any(x_edges > 0))
+    _, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+    return bool(np.any(edges > 0))
+
+
+def has_positive_y(obj, kind: str) -> bool:
+    if kind == "TGraph":
+        y_values = np.asarray(obj.member("fY"), dtype=float)[: int(obj.member("fN"))]
+        return bool(np.any(y_values > 0))
+    if kind == "TH2":
+        _, _, y_edges = obj.to_numpy()
+        return bool(np.any(y_edges > 0))
+    if kind == "TProfile2D":
+        _, _, y_edges = profile2d_numpy(obj)
+        return bool(np.any(y_edges > 0))
+    values, _ = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+    return bool(np.any(values > 0))
+
+
+def has_positive_z(obj) -> bool:
+    values, _, _ = profile2d_numpy(obj) if plot_kind(obj) == "TProfile2D" else obj.to_numpy()
+    return bool(np.any(values > 0))
 
 
 def optional_float(value, fallback: float | None = None) -> float | None:

@@ -2,3 +2,6 @@ __pycache__/
 uploads/*.root
 exports/*
 !exports/.gitkeep
+requirements-dev.txt
+tests/
+tests/artifacts/
