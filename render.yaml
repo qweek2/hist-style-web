@@ -4,7 +4,13 @@ services:
     runtime: docker
     plan: free
     envVars:
+      - key: APP_VERSION
+        value: "0.2.0"
+      - key: ASSET_VERSION
+        value: "0.2.0"
       - key: MAX_UPLOAD_MB
         value: "200"
       - key: UPLOAD_TTL_SECONDS
         value: "3600"
+      - key: ALLOW_LOCAL_FILE_OPEN
+        value: "0"

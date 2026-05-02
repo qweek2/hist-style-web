@@ -73,6 +73,13 @@ const analysisResults = document.querySelector("#analysisResults");
 const analysisWarnings = document.querySelector("#analysisWarnings");
 const scaleControls = document.querySelectorAll(".segmented[data-scale]");
 
+const APP_CONFIG = window.HIST_STYLE_WEB || {};
+const APP_VERSION = APP_CONFIG.appVersion || "0.2.0";
+const PROJECT_SCHEMA = APP_CONFIG.projectSchema || "hist-style-web.project";
+const PROJECT_SCHEMA_VERSION = Number(APP_CONFIG.projectSchemaVersion || 2);
+const STYLE_SCHEMA = "hist-style-web.style";
+const STYLE_SCHEMA_VERSION = 1;
+
 let currentFileId = null;
 let currentHist = null;
 let currentRootFileName = "";
@@ -1476,7 +1483,10 @@ async function loadProject() {
 function stylePayload(imageFormat) {
   saveSettingsFromForm();
   return {
-    version: 1,
+    schema: STYLE_SCHEMA,
+    schemaVersion: STYLE_SCHEMA_VERSION,
+    createdAt: new Date().toISOString(),
+    app: appMetadata(),
     format: imageFormat,
     globalSettings: { ...globalSettings },
     histSettings: Object.fromEntries(histSettings),
@@ -1486,11 +1496,19 @@ function stylePayload(imageFormat) {
 function projectPayload() {
   saveSettingsFromForm();
   return {
-    schema: "hist-style-web.project.v1",
+    schema: PROJECT_SCHEMA,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
-    app: {
-      name: "Histogram Style Web",
-      version: "0.1.0",
+    app: appMetadata(),
+    formats: {
+      project: {
+        schema: PROJECT_SCHEMA,
+        schemaVersion: PROJECT_SCHEMA_VERSION,
+      },
+      style: {
+        schema: STYLE_SCHEMA,
+        schemaVersion: STYLE_SCHEMA_VERSION,
+      },
     },
     source: {
       rootFileName: currentRootFileName || "",
@@ -1529,9 +1547,8 @@ function projectPayload() {
 }
 
 async function applyProjectPayload(payload) {
-  if (payload.schema !== "hist-style-web.project.v1") {
-    throw new Error("Unsupported project file schema");
-  }
+  payload = migrateProjectPayload(payload);
+  validateProjectPayload(payload);
   const expectedRootFileName = payload.source?.rootFileName || "";
   const expectedRootFilePath = payload.source?.rootFilePath || "";
 
@@ -1608,6 +1625,73 @@ async function applyProjectPayload(payload) {
       projectRootFilePath: expectedRootFilePath,
       currentRootFilePath,
     });
+  }
+}
+
+function appMetadata() {
+  return {
+    name: "Histogram Style Web",
+    version: APP_VERSION,
+  };
+}
+
+function migrateProjectPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Project file must be a JSON object");
+  }
+  if (payload.schema === PROJECT_SCHEMA && Number(payload.schemaVersion) === PROJECT_SCHEMA_VERSION) {
+    return payload;
+  }
+  if (payload.schema === "hist-style-web.project.v1") {
+    return {
+      schema: PROJECT_SCHEMA,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      migratedFrom: {
+        schema: payload.schema,
+        schemaVersion: 1,
+      },
+      createdAt: payload.createdAt || "",
+      migratedAt: new Date().toISOString(),
+      app: payload.app || appMetadata(),
+      formats: {
+        project: {
+          schema: PROJECT_SCHEMA,
+          schemaVersion: PROJECT_SCHEMA_VERSION,
+        },
+        style: {
+          schema: STYLE_SCHEMA,
+          schemaVersion: STYLE_SCHEMA_VERSION,
+        },
+      },
+      source: payload.source || {},
+      view: payload.view || {},
+      settings: payload.settings || {},
+      compare: payload.compare || {},
+      panel: payload.panel || {},
+      analysis: payload.analysis || {},
+    };
+  }
+  throw new Error(`Unsupported project file schema: ${payload.schema || "missing"}`);
+}
+
+function validateProjectPayload(payload) {
+  if (payload.schema !== PROJECT_SCHEMA) {
+    throw new Error(`Unsupported project file schema: ${payload.schema || "missing"}`);
+  }
+  if (Number(payload.schemaVersion) !== PROJECT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported project schema version: ${payload.schemaVersion || "missing"}`);
+  }
+  if (!payload.settings || typeof payload.settings !== "object") {
+    throw new Error("Project file is missing settings");
+  }
+  if (payload.settings.global && typeof payload.settings.global !== "object") {
+    throw new Error("Project global settings must be an object");
+  }
+  if (payload.settings.perObject && typeof payload.settings.perObject !== "object") {
+    throw new Error("Project per-object settings must be an object");
+  }
+  if (payload.view?.comparePaths && !Array.isArray(payload.view.comparePaths)) {
+    throw new Error("Project compare paths must be an array");
   }
 }
 

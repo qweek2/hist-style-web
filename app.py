@@ -1,13 +1,15 @@
 from pathlib import Path
 from uuid import uuid4
 from io import BytesIO
+from datetime import datetime, timezone
+import json
 import os
 import re
 import time
 import zipfile
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 
@@ -18,21 +20,53 @@ from root_reader import get_histogram, histogram_summary, list_histograms, objec
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
+APP_NAME = "Histogram Style Web"
+APP_VERSION = os.getenv("APP_VERSION", "0.2.0")
+PROJECT_SCHEMA = "hist-style-web.project"
+PROJECT_SCHEMA_VERSION = 2
+STYLE_SCHEMA = "hist-style-web.style"
+STYLE_SCHEMA_VERSION = 1
+EXPORT_MANIFEST_SCHEMA = "hist-style-web.export-manifest"
+EXPORT_MANIFEST_SCHEMA_VERSION = 1
+ASSET_VERSION = os.getenv("ASSET_VERSION", APP_VERSION)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "200")) * 1024 * 1024
 UPLOAD_TTL_SECONDS = int(os.getenv("UPLOAD_TTL_SECONDS", "3600"))
 ALLOW_LOCAL_FILE_OPEN = os.getenv("ALLOW_LOCAL_FILE_OPEN", "0" if os.getenv("RENDER") else "1") == "1"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="Histogram Style Web")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+class CacheControlledStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+app = FastAPI(title=APP_NAME, version=APP_VERSION)
+app.mount("/static", CacheControlledStaticFiles(directory=STATIC_DIR), name="static")
 
 FILES: dict[str, Path] = {}
 
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace("__APP_VERSION__", APP_VERSION)
+    html = html.replace("__ASSET_VERSION__", ASSET_VERSION)
+    html = html.replace("__PROJECT_SCHEMA__", PROJECT_SCHEMA)
+    html = html.replace("__PROJECT_SCHEMA_VERSION__", str(PROJECT_SCHEMA_VERSION))
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@app.get("/api/version")
+def version():
+    return app_metadata()
 
 
 @app.post("/api/upload")
@@ -264,8 +298,10 @@ def export_all(file_id: str, payload: dict):
 
     try:
         histograms = list_histograms(root_path)
+        manifest = export_manifest(root_path, image_format, global_settings, hist_settings, histograms)
         buffer = BytesIO()
         with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
             for hist_info in histograms:
                 path = hist_info["path"]
                 settings = {**global_settings, **hist_settings.get(path, {})}
@@ -367,6 +403,59 @@ def file_path(file_id: str) -> Path:
     if not root_path or not root_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return root_path
+
+
+def app_metadata() -> dict:
+    return {
+        "name": APP_NAME,
+        "version": APP_VERSION,
+        "assetVersion": ASSET_VERSION,
+        "formats": {
+            "project": {
+                "schema": PROJECT_SCHEMA,
+                "schemaVersion": PROJECT_SCHEMA_VERSION,
+            },
+            "style": {
+                "schema": STYLE_SCHEMA,
+                "schemaVersion": STYLE_SCHEMA_VERSION,
+            },
+            "exportManifest": {
+                "schema": EXPORT_MANIFEST_SCHEMA,
+                "schemaVersion": EXPORT_MANIFEST_SCHEMA_VERSION,
+            },
+        },
+    }
+
+
+def export_manifest(root_path: Path, image_format: str, global_settings: dict, hist_settings: dict, histograms: list[dict]) -> dict:
+    created_at = datetime.now(timezone.utc).isoformat()
+    objects = []
+    for hist_info in histograms:
+        path = hist_info["path"]
+        objects.append(
+            {
+                "path": path,
+                "kind": hist_info.get("kind"),
+                "className": hist_info.get("className"),
+                "output": f"{safe_name(path)}.{image_format}",
+                "hasObjectSettings": path in hist_settings,
+                "settings": {**global_settings, **hist_settings.get(path, {})},
+            }
+        )
+    return {
+        "schema": EXPORT_MANIFEST_SCHEMA,
+        "schemaVersion": EXPORT_MANIFEST_SCHEMA_VERSION,
+        "createdAt": created_at,
+        "app": app_metadata(),
+        "source": {
+            "rootFileName": root_path.name,
+            "rootFilePath": str(root_path) if ALLOW_LOCAL_FILE_OPEN else "",
+        },
+        "format": image_format,
+        "objectCount": len(objects),
+        "globalSettings": global_settings,
+        "objects": objects,
+    }
 
 
 def empty_to_none(value: str | None) -> str | None:

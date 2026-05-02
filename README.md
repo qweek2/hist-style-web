@@ -277,6 +277,7 @@ Use `Save project` to store the current plotting session as a JSON file.
 A project records:
 
 - project schema and creation time
+- app version
 - source ROOT file name
 - optional source ROOT local path metadata
 - selected object
@@ -287,6 +288,19 @@ A project records:
 - panel settings
 - analysis range
 - export format
+
+The current project format uses:
+
+```json
+{
+  "schema": "hist-style-web.project",
+  "schemaVersion": 2
+}
+```
+
+Older project files with `hist-style-web.project.v1` are migrated in the
+browser when loaded. Unsupported future schema versions fail explicitly instead
+of being partially applied.
 
 Project files do not contain ROOT data. To restore a session, load the same
 ROOT file and then choose `Load project`. If the project contains a local ROOT
@@ -305,6 +319,11 @@ Supported export paths:
 - current comparison plot
 - current panel figure
 - all discovered objects as a ZIP archive
+
+`Export all` includes a `manifest.json` file inside the ZIP archive. The
+manifest records the app version, manifest schema version, source ROOT metadata,
+output filenames, object paths, object kinds, global settings, and per-object
+settings used for each exported figure.
 
 Supported formats:
 
@@ -376,10 +395,17 @@ Both directories are ignored by Git.
 Environment variables:
 
 ```text
+APP_VERSION=0.2.0
+ASSET_VERSION=0.2.0
 MAX_UPLOAD_MB=200
 UPLOAD_TTL_SECONDS=3600
 ALLOW_LOCAL_FILE_OPEN=1
 ```
+
+`APP_VERSION` is embedded into project files, export manifests, and `/api/version`.
+
+`ASSET_VERSION` is appended to frontend CSS/JS URLs. Change it when deploying
+new frontend assets if it differs from `APP_VERSION`.
 
 `MAX_UPLOAD_MB` limits uploaded ROOT file size.
 
