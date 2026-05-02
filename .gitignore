@@ -1,7 +1,9 @@
 __pycache__/
+.pytest_cache/
+pytest-cache-files-*/
 uploads/*.root
 exports/*
 !exports/.gitkeep
-requirements-dev.txt
-tests/
 tests/artifacts/
+tests/__pycache__/
+tests/ui_smoke.py
