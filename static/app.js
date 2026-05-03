@@ -16,6 +16,7 @@ const selectedName = document.querySelector("#selectedName");
 const downloadLink = document.querySelector("#downloadLink");
 const formatInput = document.querySelector("#formatInput");
 const exportAllButton = document.querySelector("#exportAllButton");
+const exportLlmButton = document.querySelector("#exportLlmButton");
 const saveStyleButton = document.querySelector("#saveStyleButton");
 const styleFileInput = document.querySelector("#styleFileInput");
 const saveProjectButton = document.querySelector("#saveProjectButton");
@@ -87,6 +88,14 @@ let currentRootFilePath = "";
 let refreshTimer = null;
 let analysisTimer = null;
 let metadataTimer = null;
+let renderRequestId = 0;
+let compareRequestId = 0;
+let panelRequestId = 0;
+let summaryRequestId = 0;
+let analysisRequestId = 0;
+let metadataRequestId = 0;
+let renderInFlight = false;
+let postRenderRefreshQueued = false;
 let allHistograms = [];
 let comparePaths = new Set();
 let compareMode = false;
@@ -297,6 +306,7 @@ formatInput.addEventListener("change", () => {
   }
 });
 exportAllButton.addEventListener("click", exportAll);
+exportLlmButton.addEventListener("click", exportForLlm);
 compareButton.addEventListener("click", compareSelected);
 previewPanelButton.addEventListener("click", previewPanel);
 panelButton.addEventListener("click", exportPanel);
@@ -372,6 +382,7 @@ async function uploadFile(file) {
   analysisWarnings.innerHTML = "<li>No object selected</li>";
   selectedName.textContent = "Select a histogram";
   downloadLink.classList.add("disabled");
+  exportLlmButton.disabled = true;
 
   const form = new FormData();
   form.append("file", file);
@@ -436,6 +447,7 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
   customInput.checked = false;
   customInput.disabled = true;
   exportAllButton.disabled = false;
+  exportLlmButton.disabled = false;
   loadSettingsToForm();
   objectInfo.textContent = "Select an object";
   currentPlotMetadata = null;
@@ -485,9 +497,11 @@ function selectHistogram(hist, button, render = true) {
   selectedName.textContent = hist.path;
   downloadLink.classList.remove("disabled");
   refreshObjectInfo(hist.path);
-  refreshAnalysisSoon();
-  refreshPlotMetadataSoon();
-  if (render) refreshPlot();
+  if (render) {
+    refreshPlot();
+  } else {
+    refreshPostRenderData();
+  }
 }
 
 function selectHistogramByPath(path, render = true) {
@@ -508,9 +522,11 @@ function selectHistogramByPath(path, render = true) {
     selectedName.textContent = hist.path;
     downloadLink.classList.remove("disabled");
     refreshObjectInfo(hist.path);
-    refreshAnalysisSoon();
-    refreshPlotMetadataSoon();
-    if (render) refreshPlot();
+    if (render) {
+      refreshPlot();
+    } else {
+      refreshPostRenderData();
+    }
   }
 }
 
@@ -551,27 +567,59 @@ function selectedComparePaths() {
 
 function refreshPlotSoon() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refreshPlot, 250);
-  refreshAnalysisSoon();
-  refreshPlotMetadataSoon();
+  clearTimeout(analysisTimer);
+  clearTimeout(metadataTimer);
+  postRenderRefreshQueued = true;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshPlot();
+  }, 250);
 }
 
-function refreshAnalysisSoon() {
+function refreshAnalysisSoon(force = false) {
+  if (!force && hasPendingRender()) {
+    clearTimeout(analysisTimer);
+    postRenderRefreshQueued = true;
+    return;
+  }
   clearTimeout(analysisTimer);
   analysisTimer = setTimeout(refreshAnalysis, 250);
 }
 
-function refreshPlotMetadataSoon() {
+function refreshPlotMetadataSoon(force = false) {
+  if (!force && hasPendingRender()) {
+    clearTimeout(metadataTimer);
+    postRenderRefreshQueued = true;
+    return;
+  }
   clearTimeout(metadataTimer);
   metadataTimer = setTimeout(refreshPlotMetadata, 250);
 }
 
+function hasPendingRender() {
+  return Boolean(refreshTimer) || renderInFlight;
+}
+
+function refreshPostRenderData() {
+  postRenderRefreshQueued = false;
+  refreshSummary();
+  refreshPlotMetadataSoon(true);
+  if (activeTab === "analysis") {
+    refreshAnalysisSoon(true);
+  }
+}
+
 async function refreshPlot() {
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+
   if (compareMode) {
+    postRenderRefreshQueued = false;
     compareSelected();
     return;
   }
   if (panelMode) {
+    postRenderRefreshQueued = false;
     previewPanel();
     return;
   }
@@ -579,16 +627,39 @@ async function refreshPlot() {
   if (!currentFileId || !currentHist) return;
 
   const imageFormat = formatInput.value;
+  const requestId = ++renderRequestId;
+  const renderPath = currentHist.path;
+  renderInFlight = true;
+  let renderCompleted = false;
   try {
     const blob = await fetchPlotImage(currentHist, "png");
+    if (!isCurrentRenderRequest(requestId, renderPath)) return;
     setPlotBlob(blob);
-    const downloadBlob = await fetchPlotImage(currentHist, imageFormat);
-    setDownloadBlob(downloadBlob, `${safeName(currentHist.path)}.${imageFormat}`);
-    refreshSummary();
-    refreshPlotMetadataSoon();
+    if (imageFormat === "png") {
+      setDownloadBlob(blob, `${safeName(renderPath)}.png`);
+    } else {
+      const downloadBlob = await fetchPlotImage(currentHist, imageFormat);
+      if (!isCurrentRenderRequest(requestId, renderPath)) return;
+      setDownloadBlob(downloadBlob, `${safeName(renderPath)}.${imageFormat}`);
+    }
+    renderInFlight = false;
+    renderCompleted = true;
+    refreshPostRenderData();
   } catch (error) {
+    if (!isCurrentRenderRequest(requestId, renderPath)) return;
     showError(`Render ${currentHist.path}`, error);
+  } finally {
+    if (requestId === renderRequestId) {
+      renderInFlight = false;
+      if (renderCompleted && postRenderRefreshQueued && !refreshTimer) {
+        refreshPostRenderData();
+      }
+    }
   }
+}
+
+function isCurrentRenderRequest(requestId, path) {
+  return requestId === renderRequestId && currentHist?.path === path && !compareMode && !panelMode;
 }
 
 function updateDownloadLink() {
@@ -620,30 +691,37 @@ async function refreshSummary() {
   }
   summaryLine.hidden = false;
   if (compareMode) {
+    summaryRequestId += 1;
     summaryLine.textContent = `Compared: ${comparePaths.size} histograms`;
     return;
   }
   if (panelMode) {
+    summaryRequestId += 1;
     summaryLine.textContent = `Panel: ${comparePaths.size} objects`;
     return;
   }
   if (!currentFileId || !currentHist) return;
 
+  const requestId = ++summaryRequestId;
+  const summaryPath = currentHist.path;
   const params = new URLSearchParams();
-  params.set("path", currentHist.path);
+  params.set("path", summaryPath);
 
   const response = await fetch(`/api/files/${currentFileId}/summary?${params.toString()}`);
+  if (requestId !== summaryRequestId || currentHist?.path !== summaryPath || compareMode || panelMode) return;
   if (!response.ok) {
     const error = await errorFromResponse(response);
-    summaryLine.textContent = `Failed to summarize ${currentHist.path}: ${error.message}`;
+    summaryLine.textContent = `Failed to summarize ${summaryPath}: ${error.message}`;
     setDiagnostics("Summarize object", error, {
       endpoint: `/api/files/${currentFileId}/summary`,
-      path: currentHist.path,
+      path: summaryPath,
     });
     return;
   }
 
-  summaryLine.textContent = formatSummary(await response.json());
+  const summary = await response.json();
+  if (requestId !== summaryRequestId || currentHist?.path !== summaryPath || compareMode || panelMode) return;
+  summaryLine.textContent = formatSummary(summary);
 }
 
 async function refreshObjectInfo(path) {
@@ -668,8 +746,10 @@ async function refreshAnalysis() {
     return;
   }
 
+  const requestId = ++analysisRequestId;
+  const analysisPath = currentHist.path;
   const payload = {
-    path: currentHist.path,
+    path: analysisPath,
     settings: formSettings(),
     xMin: analysisXMinInput.value,
     xMax: analysisXMaxInput.value,
@@ -687,21 +767,27 @@ async function refreshAnalysis() {
         payload,
       });
     }
-    renderAnalysis(await response.json());
+    const analysis = await response.json();
+    if (requestId !== analysisRequestId || currentHist?.path !== analysisPath || compareMode || panelMode) return;
+    renderAnalysis(analysis);
   } catch (error) {
+    if (requestId !== analysisRequestId || currentHist?.path !== analysisPath || compareMode || panelMode) return;
     showError("Analyze object", error);
   }
 }
 
 async function refreshPlotMetadata() {
   if (!currentFileId || !currentHist || compareMode || panelMode) {
+    metadataRequestId += 1;
     currentPlotMetadata = null;
     updateSelectionOverlay();
     return;
   }
 
+  const requestId = ++metadataRequestId;
+  const metadataPath = currentHist.path;
   const payload = {
-    path: currentHist.path,
+    path: metadataPath,
     settings: formSettings(),
   };
 
@@ -717,9 +803,12 @@ async function refreshPlotMetadata() {
         payload,
       });
     }
-    currentPlotMetadata = await response.json();
+    const metadata = await response.json();
+    if (requestId !== metadataRequestId || currentHist?.path !== metadataPath || compareMode || panelMode) return;
+    currentPlotMetadata = metadata;
     updateSelectionOverlay();
   } catch (error) {
+    if (requestId !== metadataRequestId || currentHist?.path !== metadataPath || compareMode || panelMode) return;
     currentPlotMetadata = null;
     updateSelectionOverlay();
     setDiagnostics("Load plot metadata", normalizeError(error));
@@ -1128,15 +1217,28 @@ async function compareSelected() {
   panelMode = false;
   selectedName.textContent = "Compare selected TH1/TProfile";
   const imageFormat = formatInput.value;
+  const requestId = ++compareRequestId;
+  const requestKey = paths.join("\n");
   try {
     const blob = await fetchCompareImage("png", paths);
+    if (!isCurrentCompareRequest(requestId, requestKey)) return;
     setPlotBlob(blob);
-    const downloadBlob = await fetchCompareImage(imageFormat, paths);
-    setDownloadBlob(downloadBlob, `compare.${imageFormat}`);
+    if (imageFormat === "png") {
+      setDownloadBlob(blob, "compare.png");
+    } else {
+      const downloadBlob = await fetchCompareImage(imageFormat, paths);
+      if (!isCurrentCompareRequest(requestId, requestKey)) return;
+      setDownloadBlob(downloadBlob, `compare.${imageFormat}`);
+    }
     refreshSummary();
   } catch (error) {
+    if (!isCurrentCompareRequest(requestId, requestKey)) return;
     showError("Compare selected objects", error);
   }
+}
+
+function isCurrentCompareRequest(requestId, requestKey) {
+  return requestId === compareRequestId && compareMode && !panelMode && selectedComparePaths().join("\n") === requestKey;
 }
 
 async function previewPanel() {
@@ -1147,15 +1249,28 @@ async function previewPanel() {
   panelMode = true;
   selectedName.textContent = "Panel preview";
   const imageFormat = formatInput.value;
+  const requestId = ++panelRequestId;
+  const requestKey = Array.from(comparePaths).join("\n");
   try {
     const blob = await fetchPanelImage("png");
+    if (!isCurrentPanelRequest(requestId, requestKey)) return;
     setPlotBlob(blob);
-    const downloadBlob = await fetchPanelImage(imageFormat);
-    setDownloadBlob(downloadBlob, `panel.${imageFormat}`);
+    if (imageFormat === "png") {
+      setDownloadBlob(blob, "panel.png");
+    } else {
+      const downloadBlob = await fetchPanelImage(imageFormat);
+      if (!isCurrentPanelRequest(requestId, requestKey)) return;
+      setDownloadBlob(downloadBlob, `panel.${imageFormat}`);
+    }
     refreshSummary();
   } catch (error) {
+    if (!isCurrentPanelRequest(requestId, requestKey)) return;
     showError("Render panel", error);
   }
+}
+
+function isCurrentPanelRequest(requestId, requestKey) {
+  return requestId === panelRequestId && panelMode && !compareMode && Array.from(comparePaths).join("\n") === requestKey;
 }
 
 async function fetchPanelImage(imageFormat) {
@@ -1448,6 +1563,48 @@ async function exportAll() {
     exportAllButton.disabled = false;
     exportAllButton.textContent = "Export all";
   }
+}
+
+async function exportForLlm() {
+  if (!currentFileId) return;
+
+  const paths = llmExportPaths();
+  if (!paths.length) {
+    showStatus("Select an object or check objects in the list");
+    return;
+  }
+
+  exportLlmButton.disabled = true;
+  exportLlmButton.textContent = "Exporting...";
+  try {
+    const response = await fetch(`/api/files/${currentFileId}/llm-export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    });
+    if (!response.ok) {
+      showError("Export for LLM", await errorFromResponse(response, {
+        endpoint: `/api/files/${currentFileId}/llm-export`,
+        payload: { paths },
+      }));
+      return;
+    }
+    const payload = await response.json();
+    const filename = paths.length === 1 ? `${safeName(paths[0])}_llm.json` : "histograms_llm.json";
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    downloadBlob(blob, filename);
+  } finally {
+    exportLlmButton.disabled = false;
+    exportLlmButton.textContent = "Export for LLM";
+  }
+}
+
+function llmExportPaths() {
+  const checkedPaths = Array.from(comparePaths);
+  if (checkedPaths.length) return checkedPaths;
+  return currentHist ? [currentHist.path] : [];
 }
 
 function saveStyle() {

@@ -1,6 +1,6 @@
 import numpy as np
 
-from root_reader import axis_edges, histogram_kind
+from root_reader import axis_edges, histogram_kind, json_safe
 
 
 class FakeAxis:
@@ -36,3 +36,14 @@ def test_axis_edges_falls_back_to_uniform_edges():
     edges = axis_edges(FakeAxis(n_bins=4, x_min=-1.0, x_max=1.0))
 
     assert np.allclose(edges, [-1.0, -0.5, 0.0, 0.5, 1.0])
+
+
+def test_json_safe_converts_numpy_and_nonfinite_values():
+    payload = json_safe(
+        {
+            "values": np.asarray([1.0, np.nan, np.inf]),
+            "nested": [np.float64(2.5), -np.inf],
+        }
+    )
+
+    assert payload == {"values": [1.0, None, None], "nested": [2.5, None]}

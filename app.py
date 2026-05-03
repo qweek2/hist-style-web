@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import uuid4
 from io import BytesIO
 from datetime import datetime, timezone
+from threading import Lock
 import json
 import os
 import re
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from plotting import PlotOptions, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
-from root_reader import get_histogram, histogram_summary, list_histograms, object_info
+from root_reader import get_histogram, histogram_summary, list_histograms, llm_export_payload, object_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,6 +29,8 @@ STYLE_SCHEMA = "hist-style-web.style"
 STYLE_SCHEMA_VERSION = 1
 EXPORT_MANIFEST_SCHEMA = "hist-style-web.export-manifest"
 EXPORT_MANIFEST_SCHEMA_VERSION = 1
+LLM_EXPORT_SCHEMA = "hist-style-web.llm-export"
+LLM_EXPORT_SCHEMA_VERSION = 1
 ASSET_VERSION = os.getenv("ASSET_VERSION", APP_VERSION)
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "200")) * 1024 * 1024
 UPLOAD_TTL_SECONDS = int(os.getenv("UPLOAD_TTL_SECONDS", "3600"))
@@ -46,6 +49,7 @@ app = FastAPI(title=APP_NAME, version=APP_VERSION)
 app.mount("/static", CacheControlledStaticFiles(directory=STATIC_DIR), name="static")
 
 FILES: dict[str, Path] = {}
+PLOT_LOCK = Lock()
 
 
 @app.get("/")
@@ -227,7 +231,8 @@ def plot(
     try:
         hist = get_histogram(root_path, path)
         validate_plot_request(hist, options)
-        image = render_histogram(hist, options, image_format)
+        with PLOT_LOCK:
+            image = render_histogram(hist, options, image_format)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -253,7 +258,8 @@ def metadata(file_id: str, payload: dict):
         obj = get_histogram(root_path, hist_path)
         options = options_from_settings(payload.get("settings", {}))
         validate_plot_request(obj, options)
-        return plot_metadata(obj, options)
+        with PLOT_LOCK:
+            return plot_metadata(obj, options)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -309,7 +315,8 @@ def export_all(file_id: str, payload: dict):
                 if options.include_summary:
                     options.summary_text = summary_line(root_path, path)
                 hist = get_histogram(root_path, path)
-                image = render_histogram(hist, options, image_format)
+                with PLOT_LOCK:
+                    image = render_histogram(hist, options, image_format)
                 archive.writestr(f"{safe_name(path)}.{image_format}", image)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -319,6 +326,24 @@ def export_all(file_id: str, payload: dict):
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="histograms.zip"'},
     )
+
+
+@app.post("/api/files/{file_id}/llm-export")
+def export_for_llm(file_id: str, payload: dict):
+    root_path = file_path(file_id)
+    paths = payload.get("paths", [])
+    if not isinstance(paths, list) or not paths:
+        raise HTTPException(status_code=400, detail="Select at least one object")
+
+    known_paths = {item["path"] for item in list_histograms(root_path)}
+    missing = [path for path in paths if path not in known_paths]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Object not found: {missing[0]}")
+
+    try:
+        return llm_export_payload(root_path, paths)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/files/{file_id}/compare")
@@ -353,7 +378,8 @@ def compare(file_id: str, payload: dict):
         validate_compare_request(histograms, options)
         if options.include_summary:
             options.summary_text = f"Compared: {len(histograms)} histograms"
-        image = render_compare_th1(histograms, options, image_format)
+        with PLOT_LOCK:
+            image = render_compare_th1(histograms, options, image_format)
     except HTTPException:
         raise
     except Exception as exc:
@@ -379,18 +405,19 @@ def panel(file_id: str, payload: dict):
         objects = [(path, get_histogram(root_path, path)) for path in paths]
         for _, obj in objects:
             validate_plot_request(obj, options, allow_fit=False)
-        image = render_panel(
-            objects,
-            options,
-            image_format,
-            columns=columns,
-            shared_x=bool(payload.get("sharedX", False)),
-            shared_y=bool(payload.get("sharedY", False)),
-            equal_ranges=bool(payload.get("equalRanges", False)),
-            panel_titles=bool(payload.get("panelTitles", True)),
-            global_title=empty_to_none(payload.get("globalTitle")),
-            spacing=optional_float(payload.get("spacing"), 0.25) or 0.25,
-        )
+        with PLOT_LOCK:
+            image = render_panel(
+                objects,
+                options,
+                image_format,
+                columns=columns,
+                shared_x=bool(payload.get("sharedX", False)),
+                shared_y=bool(payload.get("sharedY", False)),
+                equal_ranges=bool(payload.get("equalRanges", False)),
+                panel_titles=bool(payload.get("panelTitles", True)),
+                global_title=empty_to_none(payload.get("globalTitle")),
+                spacing=optional_float(payload.get("spacing"), 0.25) or 0.25,
+            )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -422,6 +449,10 @@ def app_metadata() -> dict:
             "exportManifest": {
                 "schema": EXPORT_MANIFEST_SCHEMA,
                 "schemaVersion": EXPORT_MANIFEST_SCHEMA_VERSION,
+            },
+            "llmExport": {
+                "schema": LLM_EXPORT_SCHEMA,
+                "schemaVersion": LLM_EXPORT_SCHEMA_VERSION,
             },
         },
     }

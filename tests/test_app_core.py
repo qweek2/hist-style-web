@@ -28,6 +28,7 @@ def test_version_endpoint_and_cache_headers():
     assert payload["version"] == app.APP_VERSION
     assert payload["formats"]["project"]["schemaVersion"] == 2
     assert payload["formats"]["exportManifest"]["schemaVersion"] == 1
+    assert payload["formats"]["llmExport"]["schemaVersion"] == 1
 
 
 def test_optional_numbers_keep_defaults_for_empty_values():

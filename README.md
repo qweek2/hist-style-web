@@ -25,6 +25,8 @@ comparison, multi-panel figures, analysis, fitting, and export.
 - Run lightweight analysis on selected 1D ranges.
 - Add quick visual fits and inspect fit quality summaries.
 - Export single plots, comparison plots, panel figures, or all objects.
+- Export selected histogram data as machine-readable JSON for LLM-assisted
+  analysis.
 - Save and reload reproducible project JSON files.
 
 ## Quick Start
@@ -98,7 +100,9 @@ with `Ctrl+F5`.
 4. Use the `Analysis` tab for range integrals, fits, and warnings.
 5. Select multiple objects for comparison or panel figures.
 6. Export the result as `PNG`, `PDF`, or `SVG`.
-7. Save a project JSON when you need reproducibility.
+7. Use `Export for LLM` when you want numeric histogram data for a chat or
+   notebook-based interpretation step.
+8. Save a project JSON when you need reproducibility.
 
 ## Supported ROOT Objects
 
@@ -321,6 +325,7 @@ Supported export paths:
 - current comparison plot
 - current panel figure
 - all discovered objects as a ZIP archive
+- selected object data as JSON for LLM-assisted analysis
 
 `Export all` includes a `manifest.json` file inside the ZIP archive. The
 manifest records the app version, manifest schema version, source ROOT metadata,
@@ -332,6 +337,20 @@ Supported formats:
 - `PNG`
 - `PDF`
 - `SVG`
+
+### Export for LLM
+
+`Export for LLM` downloads a JSON file with numeric data instead of a rendered
+image. If one or more objects are checked in the object list, those objects are
+exported. If nothing is checked, the currently displayed object is exported.
+
+The JSON includes object metadata, ROOT class, title, axis labels, entries,
+summary statistics, bin edges, bin values, and available errors. `TH2` and
+`TProfile2D` exports include X/Y bin edges and a 2D value array. `TGraph`
+exports include X/Y point arrays and available point errors.
+
+This is intended for lightweight interpretation workflows where an LLM or
+notebook needs the underlying numbers rather than pixels from a rendered plot.
 
 Recommended choices:
 

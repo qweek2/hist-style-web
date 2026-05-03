@@ -44,6 +44,86 @@ def histogram_summary(root_path: Path, hist_path: str) -> dict:
     return th1_summary(hist)
 
 
+def llm_export_payload(root_path: Path, paths: list[str]) -> dict:
+    exported = []
+    for hist_path in paths:
+        obj = get_histogram(root_path, hist_path)
+        exported.append(llm_export_object(obj, hist_path))
+
+    return json_safe(
+        {
+            "schema": "hist-style-web.llm-export",
+            "schemaVersion": 1,
+            "source": {
+                "rootFileName": root_path.name,
+            },
+            "objectCount": len(exported),
+            "histograms": exported,
+        }
+    )
+
+
+def llm_export_object(obj, hist_path: str) -> dict:
+    kind = histogram_kind(obj.classname) or obj.classname
+    base = {
+        "object": kind,
+        "class_name": obj.classname,
+        "path": hist_path,
+        "title": member_text(obj, "fTitle"),
+        "x_label": axis_title(obj, 0),
+        "y_label": axis_title(obj, 1),
+        "entries": member_float(obj, "fEntries"),
+    }
+
+    if kind in {"TH1", "TProfile"}:
+        values, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+        errors = bin_errors(obj, values, profile=(kind == "TProfile"))
+        base.update(th1_summary(obj))
+        base.update(
+            {
+                "bin_edges": edges,
+                "bin_values": values,
+                "bin_errors": errors,
+                "underflow": flow_value(obj, "underflow"),
+                "overflow": flow_value(obj, "overflow"),
+            }
+        )
+        if kind == "TProfile":
+            base["semantics"] = "TProfile bin values are mean Y per X bin, not raw event counts."
+        return base
+
+    if kind in {"TH2", "TProfile2D"}:
+        values, x_edges, y_edges = profile2d_numpy(obj) if kind == "TProfile2D" else obj.to_numpy()
+        base.update(th2_summary(obj))
+        base.update(
+            {
+                "x_bin_edges": x_edges,
+                "y_bin_edges": y_edges,
+                "bin_values": values,
+                "z_label": axis_title(obj, 2),
+            }
+        )
+        if kind == "TProfile2D":
+            base["semantics"] = "TProfile2D bin values are mean Z per X/Y bin, not raw event counts."
+        return base
+
+    if kind == "TGraph":
+        x_values, y_values, x_errors, y_errors = graph_arrays(obj)
+        base.update(tgraph_summary(obj))
+        base.update(
+            {
+                "points": int(len(x_values)),
+                "x_values": x_values,
+                "y_values": y_values,
+                "x_errors": x_errors,
+                "y_errors": y_errors,
+            }
+        )
+        return base
+
+    return base
+
+
 def object_info(root_path: Path, hist_path: str) -> dict:
     obj = get_histogram(root_path, hist_path)
     kind = histogram_kind(obj.classname) or obj.classname
@@ -166,6 +246,39 @@ def graph_error_array(graph, symmetric_name: str, low_name: str, high_name: str,
         return np.vstack([low, high])
     except Exception:
         return None
+
+
+def bin_errors(hist, values, profile: bool = False):
+    try:
+        return np.asarray(hist.errors(flow=False), dtype=float)
+    except Exception:
+        if profile:
+            return None
+        return np.sqrt(np.clip(np.asarray(values, dtype=float), 0, None))
+
+
+def flow_value(hist, side: str) -> float | None:
+    try:
+        values = np.asarray(hist.values(flow=True), dtype=float)
+        if len(values) < 2:
+            return None
+        return float(values[0] if side == "underflow" else values[-1])
+    except Exception:
+        return None
+
+
+def json_safe(value):
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return json_safe(value.item())
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    return value
 
 
 def weighted_mean(centers, weights) -> float:
