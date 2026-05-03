@@ -1118,6 +1118,35 @@ ROOT_SYMBOLS = {
     "#leftarrow": r"\leftarrow",
 }
 
+ROOT_PLAIN_SYMBOLS = {
+    "#alpha": "alpha",
+    "#beta": "beta",
+    "#gamma": "gamma",
+    "#delta": "delta",
+    "#Delta": "Delta",
+    "#epsilon": "epsilon",
+    "#eta": "eta",
+    "#theta": "theta",
+    "#lambda": "lambda",
+    "#mu": "mu",
+    "#nu": "nu",
+    "#pi": "pi",
+    "#rho": "rho",
+    "#sigma": "sigma",
+    "#Sigma": "Sigma",
+    "#tau": "tau",
+    "#phi": "phi",
+    "#Phi": "Phi",
+    "#chi": "chi",
+    "#psi": "psi",
+    "#omega": "omega",
+    "#Omega": "Omega",
+    "#pm": "+/-",
+    "#times": "x",
+    "#rightarrow": "->",
+    "#leftarrow": "<-",
+}
+
 
 def format_root_text(text: str) -> str:
     if not text:
@@ -1127,40 +1156,54 @@ def format_root_text(text: str) -> str:
     if not formatted:
         return ""
 
-    if needs_full_math(formatted):
-        return f"${formatted}$"
+    return "$".join(
+        chunk if index % 2 else format_root_text_chunk(chunk)
+        for index, chunk in enumerate(formatted.split("$"))
+    )
 
+
+def format_root_text_chunk(chunk: str) -> str:
+    if not chunk:
+        return ""
+
+    formatted = chunk
     for root_symbol, math_symbol in sorted(ROOT_SYMBOLS.items(), key=lambda item: len(item[0]), reverse=True):
-        formatted = formatted.replace(root_symbol, f"${math_symbol}$")
+        formatted = formatted.replace(root_symbol, math_symbol)
 
     formatted = re.sub(r"#([A-Za-z]+)", r"\1", formatted)
-    formatted = re.sub(r"\$(\\[A-Za-z]+)\$([_^]\{[^{}]+\})", r"$\1\2$", formatted)
-    formatted = wrap_subscripts_outside_math(formatted)
+    formatted = split_ambiguous_backslash_commands(formatted)
+    formatted = wrap_math_expressions(formatted)
     return wrap_remaining_math_commands(formatted)
 
 
 def safe_label_text(text: str) -> str:
-    formatted = format_root_text(text)
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    formatted = format_root_text(raw)
+    if validate_mathtext_label(formatted):
+        return formatted
+    return plain_root_text(raw)
+
+
+def validate_mathtext_label(text: str) -> bool:
     try:
         from matplotlib.mathtext import MathTextParser
 
         parser = MathTextParser("agg")
-        parser.parse(formatted)
-        return formatted
+        parser.parse(text)
+        return True
     except Exception:
-        return plain_root_text(text)
-
-
-def needs_full_math(text: str) -> bool:
-    if "$" in text:
         return False
-    return bool(re.search(r"[_^]\{[^{}]+\}", text) and re.search(r"[()/]", text))
 
 
 def plain_root_text(text: str) -> str:
     plain = str(text or "")
-    for root_symbol, math_symbol in ROOT_SYMBOLS.items():
-        plain = plain.replace(root_symbol, math_symbol.replace("\\", ""))
+    for root_symbol, replacement in ROOT_PLAIN_SYMBOLS.items():
+        plain = plain.replace(root_symbol, replacement)
+    plain = re.sub(r"#([A-Za-z]+)", r"\1", plain)
+    plain = re.sub(r"\$([^$]*)\$", r"\1", plain)
     return plain.replace("\\", "")
 
 
@@ -1169,25 +1212,37 @@ def ascii_safe_text(text: str) -> str:
     return plain.encode("ascii", errors="ignore").decode("ascii")
 
 
-def wrap_subscripts_outside_math(text: str) -> str:
-    chunks = text.split("$")
-    for index in range(0, len(chunks), 2):
-        chunks[index] = re.sub(r"([A-Za-z0-9\\]+(?:[_^]\{[^{}]+\})+)", r"$\1$", chunks[index])
-    return "$".join(chunks)
+def split_ambiguous_backslash_commands(text: str) -> str:
+    commands = sorted(SAFE_MATH_COMMANDS, key=len, reverse=True)
+    pattern = re.compile(r"\\(" + "|".join(re.escape(command) for command in commands) + r")([A-Za-z]+)")
+
+    def replace(match: re.Match) -> str:
+        command = match.group(1)
+        rest = match.group(2)
+        return f"\\{command} {rest}"
+
+    return pattern.sub(replace, text)
+
+
+def wrap_math_expressions(text: str) -> str:
+    allowed = r"[A-Za-z0-9\\_{}()+\-*/=<>.,]+"
+    pattern = re.compile(rf"(?<!\$)({allowed}(?:[_^]\{{[^{{}}]+\}})(?:{allowed})*)")
+    return pattern.sub(lambda match: f"${match.group(1)}$", text)
 
 
 def wrap_remaining_math_commands(text: str) -> str:
     chunks = text.split("$")
     for index in range(0, len(chunks), 2):
-        chunks[index] = re.sub(r"\\([A-Za-z]+)", safe_math_command, chunks[index])
+        chunks[index] = re.sub(r"\\([A-Za-z]+)(?:\s+([A-Za-z]))?", safe_math_command, chunks[index])
     return "$".join(chunks)
 
 
 def safe_math_command(match: re.Match) -> str:
     command = match.group(1)
     if command in SAFE_MATH_COMMANDS:
-        return f"$\\{command}$"
-    return command
+        suffix = f" {match.group(2)}" if match.group(2) else ""
+        return f"$\\{command}{suffix}$"
+    return match.group(0).replace("\\", "")
 
 
 SAFE_MATH_COMMANDS = {
