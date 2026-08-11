@@ -24,6 +24,7 @@ const projectFileInput = document.querySelector("#projectFileInput");
 const tabButtons = document.querySelectorAll(".tab-button");
 const tabPanes = document.querySelectorAll(".tab-pane");
 const stylePresetInput = document.querySelector("#stylePresetInput");
+const resetSettingsButton = document.querySelector("#resetSettingsButton");
 const dpiInput = document.querySelector("#dpiInput");
 const aspectRatioInput = document.querySelector("#aspectRatioInput");
 const lineWidthInput = document.querySelector("#lineWidthInput");
@@ -61,6 +62,7 @@ const includeSummaryInput = document.querySelector("#includeSummaryInput");
 const panelColumnsInput = document.querySelector("#panelColumnsInput");
 const panelSharedXInput = document.querySelector("#panelSharedXInput");
 const panelSharedYInput = document.querySelector("#panelSharedYInput");
+const panelSharedZInput = document.querySelector("#panelSharedZInput");
 const panelEqualRangesInput = document.querySelector("#panelEqualRangesInput");
 const panelTitlesInput = document.querySelector("#panelTitlesInput");
 const panelSpacingInput = document.querySelector("#panelSpacingInput");
@@ -97,6 +99,8 @@ let metadataRequestId = 0;
 let renderInFlight = false;
 let postRenderRefreshQueued = false;
 let allHistograms = [];
+let rootFolders = [];
+const expandedFolders = new Set();
 let comparePaths = new Set();
 let compareMode = false;
 let panelMode = false;
@@ -153,6 +157,7 @@ const globalSettings = {
   tickDirection: "out",
 };
 const histSettings = new Map();
+const DEFAULT_SETTINGS = { ...globalSettings };
 
 const PRESETS = {
   journal: {
@@ -274,7 +279,7 @@ selectionOverlay.addEventListener("pointermove", updateSelection);
 selectionOverlay.addEventListener("pointerup", finishSelection);
 selectionOverlay.addEventListener("pointercancel", cancelSelection);
 
-[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, lineStyleInput, markerStyleInput, lineAlphaInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, uncertaintyBandInput, compareModeInput, fitEnabledInput, fitModelInput, fitXMinInput, fitXMaxInput, titleInput, xLabelInput, yLabelInput, compareLabelsInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
+[dpiInput, aspectRatioInput, lineWidthInput, lineColorInput, lineStyleInput, markerStyleInput, lineAlphaInput, colormapInput, normalizationInput, showErrorsInput, showLegendInput, uncertaintyBandInput, compareModeInput, fitEnabledInput, fitModelInput, fitXMinInput, fitXMaxInput, titleInput, xLabelInput, yLabelInput, compareLabelsInput, titleFontSizeInput, labelFontSizeInput, tickFontSizeInput, xMinInput, xMaxInput, yMinInput, yMaxInput, zMinInput, zMaxInput, showSummaryInput, includeSummaryInput, panelSharedXInput, panelSharedYInput, panelSharedZInput, panelEqualRangesInput, panelTitlesInput, panelSpacingInput, panelGlobalTitleInput].forEach((input) => {
   input.addEventListener("input", () => {
     saveSettingsFromForm();
     refreshPlotSoon();
@@ -295,6 +300,8 @@ stylePresetInput.addEventListener("change", () => {
   loadSettingsToForm();
   refreshPlotSoon();
 });
+
+resetSettingsButton.addEventListener("click", resetSettings);
 
 formatInput.addEventListener("change", () => {
   if (compareMode) {
@@ -439,6 +446,8 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
   rootPathInput.value = currentRootFilePath;
   currentHist = null;
   allHistograms = data.histograms;
+  rootFolders = data.folders || [];
+  expandedFolders.clear();
   comparePaths.clear();
   legendSettings.clear();
   compareMode = false;
@@ -454,28 +463,95 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
   updateSelectionOverlay();
   analysisResults.textContent = "Select a 1D object";
   analysisWarnings.innerHTML = "<li>No object selected</li>";
-  showStatus(`${data.histograms.length} histograms found`);
+  showStatus(`${data.histograms.length} objects found${rootFolders.length ? ` in ${rootFolders.length} folders` : ""}`);
   renderHistogramList(filteredHistograms());
 }
 
 function renderHistogramList(histograms) {
   histList.innerHTML = "";
 
+  const query = searchInput.value.trim().toLowerCase();
+  const folders = new Set();
   for (const hist of histograms) {
+    const parts = hist.path.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      folders.add(parts.slice(0, index).join("/"));
+    }
+  }
+  for (const folder of rootFolders) {
+    if (!query || histograms.some((hist) => hist.path.startsWith(`${folder.path}/`))) {
+      folders.add(folder.path);
+    }
+  }
+
+  const appendHistogramItem = (hist, depth = 0) => {
     const button = document.createElement("button");
     button.className = "hist-item";
     button.type = "button";
+    button.dataset.path = hist.path;
+    button.style.paddingLeft = `${9 + depth * 14}px`;
     button.innerHTML = `
       <input class="compare-check" type="checkbox" ${comparePaths.has(hist.path) ? "checked" : ""} />
-      <span>${escapeHtml(hist.path)}</span>
+      <span>${escapeHtml(hist.path.split("/").pop())}</span>
       <small>${escapeHtml(hist.className)}</small>
     `;
+    button.title = hist.path;
     button.querySelector(".compare-check").addEventListener("click", (event) => {
       event.stopPropagation();
       toggleCompare(hist.path, event.target.checked);
     });
     button.addEventListener("click", () => selectHistogram(hist, button));
     histList.appendChild(button);
+  };
+
+  const appendFolder = (folderPath, depth) => {
+    const directFolders = Array.from(folders)
+      .filter((path) => path !== folderPath && path.startsWith(`${folderPath}/`) && path.slice(folderPath.length + 1).indexOf("/") === -1)
+      .sort((a, b) => a.localeCompare(b));
+    const directObjects = histograms
+      .filter((hist) => {
+        const parent = hist.path.includes("/") ? hist.path.slice(0, hist.path.lastIndexOf("/")) : "";
+        return parent === folderPath;
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+
+    for (const child of directFolders) {
+      const row = document.createElement("div");
+      row.className = "folder-row";
+      row.style.paddingLeft = `${8 + depth * 14}px`;
+      const isOpen = expandedFolders.has(child);
+      row.innerHTML = `<button type="button" class="folder-toggle" aria-expanded="${isOpen}">${isOpen ? "▾" : "▸"}</button><span>${escapeHtml(child.split("/").pop())}</span>`;
+      row.title = child;
+      row.querySelector(".folder-toggle").addEventListener("click", () => {
+        if (expandedFolders.has(child)) expandedFolders.delete(child);
+        else expandedFolders.add(child);
+        renderHistogramList(filteredHistograms());
+      });
+      histList.appendChild(row);
+      if (isOpen) appendFolder(child, depth + 1);
+    }
+
+    for (const hist of directObjects) {
+      appendHistogramItem(hist, depth + 1);
+    }
+  };
+
+  for (const hist of histograms.filter((item) => !item.path.includes("/")).sort((a, b) => a.path.localeCompare(b.path))) {
+    appendHistogramItem(hist, 0);
+  }
+  for (const folder of Array.from(folders).filter((path) => !path.includes("/")).sort()) {
+    const row = document.createElement("div");
+    row.className = "folder-row";
+    const isOpen = expandedFolders.has(folder);
+    row.innerHTML = `<button type="button" class="folder-toggle" aria-expanded="${isOpen}">${isOpen ? "▾" : "▸"}</button><span>${escapeHtml(folder)}</span>`;
+    row.title = folder;
+    row.querySelector(".folder-toggle").addEventListener("click", () => {
+      if (expandedFolders.has(folder)) expandedFolders.delete(folder);
+      else expandedFolders.add(folder);
+      renderHistogramList(filteredHistograms());
+    });
+    histList.appendChild(row);
+    if (isOpen) appendFolder(folder, 1);
   }
   updateCompareButton();
   renderLegendEditor();
@@ -511,7 +587,7 @@ function selectHistogramByPath(path, render = true) {
     return;
   }
   const buttons = Array.from(document.querySelectorAll(".hist-item"));
-  const button = buttons.find((item) => item.querySelector("span")?.textContent === path);
+  const button = buttons.find((item) => item.dataset.path === path);
   if (button) {
     selectHistogram(hist, button, render);
   } else {
@@ -1009,6 +1085,19 @@ function formatObjectInfo(info) {
 }
 
 function formatSummary(summary) {
+  if (summary.kind === "TCanvas") {
+    return [
+      `Canvas primitives: ${formatNumber(summary.primitiveCount)}`,
+      `Kinds: ${(summary.primitiveKinds || []).join(", ") || "none"}`,
+    ].join(" | ");
+  }
+  if (summary.kind === "TGraph") {
+    return [
+      `Points: ${formatNumber(summary.points)}`,
+      `Mean X/Y: ${formatNumber(summary.meanX)} / ${formatNumber(summary.meanY)}`,
+      `RMS X/Y: ${formatNumber(summary.rmsX)} / ${formatNumber(summary.rmsY)}`,
+    ].join(" | ");
+  }
   if (summary.kind === "TH2" || summary.kind === "TProfile2D") {
     return [
       `Entries: ${formatNumber(summary.entries)}`,
@@ -1207,6 +1296,16 @@ function applyPreset(name) {
   Object.assign(target, PRESETS[name] || PRESETS.journal);
 }
 
+function resetSettings() {
+  Object.assign(globalSettings, DEFAULT_SETTINGS);
+  histSettings.clear();
+  customInput.checked = false;
+  customInput.disabled = !currentHist;
+  loadSettingsToForm();
+  showStatus("Settings reset to defaults");
+  refreshPlotSoon();
+}
+
 async function compareSelected() {
   if (!currentFileId || comparePaths.size < 2) return;
   const paths = selectedComparePaths();
@@ -1280,6 +1379,7 @@ async function fetchPanelImage(imageFormat) {
     columns: panelColumnsInput.value,
     sharedX: panelSharedXInput.checked,
     sharedY: panelSharedYInput.checked,
+    sharedZ: panelSharedZInput.checked,
     equalRanges: panelEqualRangesInput.checked,
     panelTitles: panelTitlesInput.checked,
     globalTitle: panelGlobalTitleInput.value,
@@ -1709,6 +1809,7 @@ function projectPayload() {
       columns: panelColumnsInput.value,
       sharedX: panelSharedXInput.checked,
       sharedY: panelSharedYInput.checked,
+      sharedZ: panelSharedZInput.checked,
       equalRanges: panelEqualRangesInput.checked,
       panelTitles: panelTitlesInput.checked,
       spacing: panelSpacingInput.value,
@@ -1764,6 +1865,7 @@ async function applyProjectPayload(payload) {
   panelColumnsInput.value = payload.panel?.columns || "2";
   panelSharedXInput.checked = Boolean(payload.panel?.sharedX);
   panelSharedYInput.checked = Boolean(payload.panel?.sharedY);
+  panelSharedZInput.checked = Boolean(payload.panel?.sharedZ);
   panelEqualRangesInput.checked = Boolean(payload.panel?.equalRanges);
   panelTitlesInput.checked = payload.panel?.panelTitles !== false;
   panelSpacingInput.value = payload.panel?.spacing || "0.25";

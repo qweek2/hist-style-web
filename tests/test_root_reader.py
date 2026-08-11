@@ -1,6 +1,6 @@
 import numpy as np
 
-from root_reader import axis_edges, histogram_kind, json_safe
+from root_reader import axis_edges, canvas_drawables, fallback_canvas_primitives, histogram_kind, json_safe, list_root_folders
 
 
 class FakeAxis:
@@ -17,13 +17,16 @@ class FakeAxis:
 
 
 def test_histogram_kind_detects_tprofile2d_before_tprofile():
+    assert histogram_kind("TCanvas") == "TCanvas"
+    assert histogram_kind("TPad") == "TCanvas"
     assert histogram_kind("TProfile2D") == "TProfile2D"
     assert histogram_kind("TProfile2D_v7") == "TProfile2D"
+    assert histogram_kind("Model_TProfile_v7") == "TProfile"
     assert histogram_kind("TProfile") == "TProfile"
     assert histogram_kind("TH2D") == "TH2"
     assert histogram_kind("TH1F") == "TH1"
     assert histogram_kind("TGraphErrors") == "TGraph"
-    assert histogram_kind("TCanvas") is None
+    assert histogram_kind("TCanvas") == "TCanvas"
 
 
 def test_axis_edges_uses_explicit_edges_when_available():
@@ -47,3 +50,68 @@ def test_json_safe_converts_numpy_and_nonfinite_values():
     )
 
     assert payload == {"values": [1.0, None, None], "nested": [2.5, None]}
+
+
+class FakeRootObject:
+    def __init__(self, classname, members=None):
+        self.classname = classname
+        self.members = members or {}
+
+    def member(self, name):
+        return self.members[name]
+
+
+def test_canvas_drawables_recurses_into_supported_primitives():
+    hist = FakeRootObject("TH1D", {"fName": "h1"})
+    nested = FakeRootObject("TPad", {"fPrimitives": [hist]})
+    canvas = FakeRootObject("TCanvas", {"fPrimitives": [nested, FakeRootObject("TLatex")]})
+
+    drawables = canvas_drawables(canvas)
+
+    assert len(drawables) == 1
+    assert drawables[0][0] == "h1"
+    assert drawables[0][1] is hist
+
+
+class FakeRootFile:
+    def __init__(self):
+        self.objects = {
+            "hFHCal_pty_all": FakeRootObject("TH2F"),
+            "hFHCal_pty_prim": FakeRootObject("TH2F"),
+            "hA_prim": FakeRootObject("TH1D"),
+            "cFHCal_PtY": FakeRootObject("TCanvas"),
+        }
+
+    def classnames(self, recursive=True):
+        return {f"{name};1": obj.classname for name, obj in self.objects.items()}
+
+    def __getitem__(self, key):
+        return self.objects[key.split(";")[0]]
+
+
+def test_list_root_folders_builds_nested_paths(monkeypatch):
+    class FakeOpen:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def classnames(self, recursive=True):
+            return {
+                "physics;1": "TDirectoryFile",
+                "physics/energy;1": "TDirectoryFile",
+                "physics/energy/h1;1": "TH1D",
+            }
+
+    monkeypatch.setattr("root_reader.uproot.open", lambda path: FakeOpen())
+    assert list_root_folders("sample.root") == [
+        {"path": "physics", "name": "physics"},
+        {"path": "physics/energy", "name": "energy"},
+    ]
+
+
+def test_fallback_canvas_primitives_matches_related_top_level_objects():
+    primitives = fallback_canvas_primitives(FakeRootFile(), "cFHCal_PtY")
+
+    assert [name for name, _ in primitives] == ["hFHCal_pty_all", "hFHCal_pty_prim"]

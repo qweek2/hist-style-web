@@ -14,6 +14,7 @@ def test_version_endpoint_and_cache_headers():
 
     index_response = client.get("/")
     assert index_response.status_code == 200
+    assert 'id="resetSettingsButton"' in index_response.text
     assert index_response.headers["cache-control"].startswith("no-store")
     assert f"/static/style.css?v={app.ASSET_VERSION}" in index_response.text
     assert f"/static/app.js?v={app.ASSET_VERSION}" in index_response.text
@@ -163,3 +164,17 @@ def test_analysis_warnings_call_out_profile_semantics():
     )
 
     assert any("TProfile bins represent mean Y per X bin" in warning for warning in warnings)
+
+
+def test_compare_validation_supports_profiles_without_to_numpy():
+    profile_a = FakeProfile1D([1.0, 2.0])
+    profile_b = FakeProfile1D([1.5, 2.5])
+
+    app.validate_compare_request(
+        [("a", profile_a), ("b", profile_b)],
+        PlotOptions(compare_mode="ratio"),
+    )
+
+
+def test_log_z_is_ignored_for_one_dimensional_objects():
+    app.validate_plot_request(FakeHist1D([1.0, 2.0]), PlotOptions(z_scale="log"))

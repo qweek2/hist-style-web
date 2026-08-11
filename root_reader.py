@@ -1,10 +1,29 @@
 from pathlib import Path
+import re
 
 import numpy as np
 import uproot
 
 
-SUPPORTED_KINDS = ("TH1", "TH2", "TProfile", "TProfile2D", "TGraph")
+SUPPORTED_KINDS = ("TH1", "TH2", "TProfile", "TProfile2D", "TGraph", "TCanvas")
+
+
+class CanvasProxy:
+    classname = "TCanvas"
+
+    def __init__(self, source, primitives: list[tuple[str, object]], name: str):
+        self.source = source
+        self._hist_style_primitives = primitives
+        self._hist_style_name = name
+
+    def member(self, name):
+        if name == "fPrimitives":
+            return [primitive for _, primitive in self._hist_style_primitives]
+        if name == "fName":
+            return self._hist_style_name
+        if name == "fTitle":
+            return member_text(self.source, "fTitle") or self._hist_style_name
+        return self.source.member(name)
 
 
 def list_histograms(root_path: Path) -> list[dict]:
@@ -29,14 +48,38 @@ def list_histograms(root_path: Path) -> list[dict]:
     return items
 
 
+def list_root_folders(root_path: Path) -> list[dict]:
+    """Return ROOT directory paths so the browser can present an object tree."""
+    folders = set()
+    with uproot.open(root_path) as root_file:
+        for key, class_name in root_file.classnames(recursive=True).items():
+            clean_key = key.split(";")[0].strip("/")
+            if not clean_key or not class_name.startswith(("TDirectory", "TFile")):
+                continue
+            parts = [part for part in clean_key.split("/") if part]
+            folders.update("/".join(parts[:index]) for index in range(1, len(parts) + 1))
+
+    return [
+        {"path": path, "name": path.rsplit("/", 1)[-1]}
+        for path in sorted(folders, key=lambda value: (value.count("/"), value.lower()))
+    ]
+
+
 def get_histogram(root_path: Path, hist_path: str):
     with uproot.open(root_path) as root_file:
-        return root_file[hist_path]
+        obj = root_file[hist_path]
+        if histogram_kind(obj.classname) == "TCanvas" and not canvas_drawables(obj):
+            primitives = fallback_canvas_primitives(root_file, hist_path)
+            if primitives:
+                return CanvasProxy(obj, primitives, hist_path)
+        return obj
 
 
 def histogram_summary(root_path: Path, hist_path: str) -> dict:
     hist = get_histogram(root_path, hist_path)
     kind = histogram_kind(hist.classname)
+    if kind == "TCanvas":
+        return canvas_summary(hist)
     if kind in {"TH2", "TProfile2D"}:
         return th2_summary(hist)
     if kind == "TGraph":
@@ -121,6 +164,19 @@ def llm_export_object(obj, hist_path: str) -> dict:
         )
         return base
 
+    if kind == "TCanvas":
+        primitives = canvas_drawables(obj)
+        base.update(
+            {
+                "primitive_count": len(primitives),
+                "primitives": [
+                    llm_export_object(primitive, f"{hist_path}::{name}")
+                    for name, primitive in primitives
+                ],
+            }
+        )
+        return base
+
     return base
 
 
@@ -170,6 +226,14 @@ def object_info(root_path: Path, hist_path: str) -> dict:
                 "xMax": float(np.max(x_values)) if len(x_values) else 0.0,
                 "yMin": float(np.min(y_values)) if len(y_values) else 0.0,
                 "yMax": float(np.max(y_values)) if len(y_values) else 0.0,
+            }
+        )
+    elif kind == "TCanvas":
+        primitives = canvas_drawables(obj)
+        info.update(
+            {
+                "primitiveCount": len(primitives),
+                "primitiveKinds": [histogram_kind(primitive.classname) or primitive.classname for _, primitive in primitives],
             }
         )
     return info
@@ -224,6 +288,121 @@ def tgraph_summary(graph) -> dict:
         "rmsX": float(np.std(x_values)) if len(x_values) else 0.0,
         "rmsY": float(np.std(y_values)) if len(y_values) else 0.0,
     }
+
+
+def canvas_summary(canvas) -> dict:
+    primitives = canvas_drawables(canvas)
+    return {
+        "kind": "TCanvas",
+        "entries": 0.0,
+        "primitiveCount": len(primitives),
+        "primitiveKinds": [histogram_kind(primitive.classname) or primitive.classname for _, primitive in primitives],
+    }
+
+
+def canvas_drawables(canvas, max_depth: int = 8) -> list[tuple[str, object]]:
+    found = []
+    walk_canvas_primitives(canvas, found, set(), max_depth)
+    return found
+
+
+def walk_canvas_primitives(obj, found: list[tuple[str, object]], seen: set[int], depth: int) -> None:
+    if depth < 0 or id(obj) in seen:
+        return
+    seen.add(id(obj))
+
+    kind = histogram_kind(getattr(obj, "classname", ""))
+    if kind and kind != "TCanvas":
+        found.append((object_name(obj, f"primitive_{len(found) + 1}"), obj))
+        return
+
+    for primitive in primitive_children(obj):
+        walk_canvas_primitives(primitive, found, seen, depth - 1)
+
+
+def primitive_children(obj) -> list:
+    proxy_primitives = getattr(obj, "_hist_style_primitives", None)
+    if proxy_primitives is not None:
+        return [primitive for _, primitive in proxy_primitives]
+
+    children = []
+    for member_name in ("fPrimitives", "fListOfPrimitives"):
+        try:
+            children.extend(iter_root_collection(obj.member(member_name)))
+        except Exception:
+            pass
+    return [child for child in children if child is not None]
+
+
+def iter_root_collection(collection) -> list:
+    try:
+        return list(collection)
+    except Exception:
+        pass
+    try:
+        return list(collection.values())
+    except Exception:
+        pass
+    for attr in ("_data", "_members"):
+        try:
+            value = getattr(collection, attr)
+            if isinstance(value, dict):
+                return list(value.values())
+            return list(value)
+        except Exception:
+            pass
+    return []
+
+
+def object_name(obj, fallback: str) -> str:
+    for name in ("fName", "fTitle"):
+        value = member_text(obj, name)
+        if value:
+            return value
+    return fallback
+
+
+def fallback_canvas_primitives(root_file, canvas_path: str) -> list[tuple[str, object]]:
+    canvas_tokens = canvas_match_tokens(canvas_path)
+    candidates = []
+    for key, class_name in root_file.classnames(recursive=True).items():
+        kind = histogram_kind(class_name)
+        if not kind or kind == "TCanvas":
+            continue
+        clean_key = key.split(";")[0]
+        score = canvas_match_score(canvas_tokens, clean_key)
+        if score <= 0:
+            continue
+        candidates.append((score, clean_key, root_file[clean_key]))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [(path, obj) for _, path, obj in candidates[:12]]
+
+
+def canvas_match_tokens(path: str) -> set[str]:
+    name = Path(path).name
+    if name.startswith("c") and len(name) > 1 and name[1].isupper():
+        name = name[1:]
+    tokens = re_split_identifier(name)
+    return {token for token in tokens if token not in {"h", "c", "canvas", "vs"}}
+
+
+def canvas_match_score(canvas_tokens: set[str], object_path: str) -> int:
+    object_tokens = set(re_split_identifier(Path(object_path).name))
+    overlap = canvas_tokens & object_tokens
+    if not overlap:
+        return 0
+    strong_overlap = overlap - {"a", "b", "ab", "pt", "y", "pty", "all", "prim", "sec"}
+    if strong_overlap:
+        return len(overlap) + 2 * len(strong_overlap)
+    if len(overlap) >= 2:
+        return len(overlap)
+    return 0
+
+
+def re_split_identifier(value: str) -> list[str]:
+    spaced = re.sub(r"([a-z])([A-Z])", r"\1_\2", value)
+    return [token.lower() for token in re.split(r"[^A-Za-z0-9]+|_", spaced) if token]
 
 
 def graph_arrays(graph):
@@ -319,15 +498,18 @@ def axis_title(obj, axis_index: int) -> str:
 
 
 def histogram_kind(class_name: str) -> str | None:
-    if class_name.startswith("TProfile2D"):
+    class_name = str(class_name or "")
+    if "TCanvas" in class_name or "TPad" in class_name:
+        return "TCanvas"
+    if "TProfile2D" in class_name:
         return "TProfile2D"
-    if class_name.startswith("TProfile"):
+    if "TProfile" in class_name:
         return "TProfile"
-    if class_name.startswith("TH2"):
+    if "TH2" in class_name:
         return "TH2"
-    if class_name.startswith("TH1"):
+    if "TH1" in class_name:
         return "TH1"
-    if class_name.startswith("TGraph"):
+    if "TGraph" in class_name:
         return "TGraph"
     return None
 

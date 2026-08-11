@@ -14,7 +14,8 @@ comparison, multi-panel figures, analysis, fitting, and export.
 ## What You Can Do
 
 - Drag and drop a `.root` file into the browser.
-- Browse supported ROOT objects recursively.
+- Browse supported ROOT objects recursively in a collapsible folder tree, including
+  objects stored inside nested `TDirectory` folders.
 - Render `TH1`, `TH2`, `TProfile`, `TProfile2D`, and `TGraph` objects.
 - Apply built-in publication and presentation style presets.
 - Customize labels, fonts, colors, line styles, markers, axis ranges, log
@@ -113,6 +114,7 @@ Currently supported:
 - `TProfile`
 - `TProfile2D`
 - `TGraph*`
+- `TCanvas`
 
 Common examples:
 
@@ -121,12 +123,14 @@ Common examples:
 - `TProfile`
 - `TProfile2D`
 - `TGraph`, `TGraphErrors`, `TGraphAsymmErrors`
+- `TCanvas` files that contain supported histogram, profile, graph, or pad
+  primitives
 
 Not yet supported:
 
 - `THStack`
 - `TEfficiency`
-- saved `TCanvas` styling
+- exact restoration of saved ROOT canvas styling and annotations
 
 ## Rendering and Styling
 
@@ -205,14 +209,16 @@ Controls include:
 - number of columns
 - shared X axis
 - shared Y axis
+- shared Z color scale for 2D panels
 - equal ranges
 - panel titles
 - global panel title
 - subplot spacing
 
 Use `Preview panel` to inspect the multi-panel figure in the browser before
-exporting it. Equal-range panels include a small Y headroom so the highest bins
-do not touch the frame.
+exporting it. For 2D histograms and `TProfile2D`, enable `Shared Z` to use a
+common color scale across panels. Equal-range panels include a small Y headroom
+so the highest bins do not touch the frame.
 
 ## Analysis
 

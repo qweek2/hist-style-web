@@ -60,6 +60,8 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
     options = options or PlotOptions()
     image_format = normalize_image_format(image_format)
     kind = plot_kind(hist)
+    if kind == "TCanvas":
+        return render_canvas(hist, options, image_format)
 
     plt.style.use("default")
     fig_width, fig_height = figure_size(options.aspect_ratio)
@@ -193,6 +195,8 @@ def axes_box_for_saved_image(fig, axes_bbox) -> dict:
 
 def plot_kind(obj) -> str:
     class_name = obj.classname
+    if class_name.startswith("TCanvas") or class_name.startswith("TPad"):
+        return "TCanvas"
     if class_name.startswith("TProfile2D"):
         return "TProfile2D"
     if class_name.startswith("TProfile"):
@@ -204,9 +208,46 @@ def plot_kind(obj) -> str:
     return "TH1"
 
 
+def render_canvas(canvas, options: PlotOptions, image_format: str) -> bytes:
+    primitives = canvas_drawables(canvas)
+    if not primitives:
+        raise ValueError("TCanvas does not contain supported drawable primitives")
+
+    plt.style.use("default")
+    fig_width, fig_height = figure_size(options.aspect_ratio)
+    with style_context(options):
+        if len(primitives) == 1:
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+            fig.patch.set_facecolor(options.figure_facecolor)
+            ax.set_facecolor(options.axes_facecolor)
+            draw_object(ax, primitives[0][1], options)
+            apply_ranges_and_scale(ax, options)
+            style_axes(ax, options)
+        elif all(canvas_overlay_kind(primitive) for _, primitive in primitives):
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=options.dpi)
+            fig.patch.set_facecolor(options.figure_facecolor)
+            ax.set_facecolor(options.axes_facecolor)
+            draw_canvas_overlay(ax, canvas, primitives, options)
+            apply_ranges_and_scale(ax, options)
+            style_axes(ax, options)
+        else:
+            fig = draw_canvas_panel(canvas, primitives, options, fig_width, fig_height)
+
+        add_summary_to_figure(fig, options)
+        safe_tight_layout(fig)
+        if options.include_summary and options.summary_text:
+            fig.subplots_adjust(bottom=0.16)
+        buffer = BytesIO()
+        save_figure(fig, buffer, image_format)
+        plt.close(fig)
+    return buffer.getvalue()
+
+
 def draw_object(ax, obj, options: PlotOptions, kind: str | None = None) -> None:
     kind = kind or plot_kind(obj)
-    if kind == "TH2":
+    if kind == "TCanvas":
+        draw_canvas_on_axis(ax, obj, options)
+    elif kind == "TH2":
         draw_th2(ax, obj, options)
     elif kind == "TProfile2D":
         draw_tprofile2d(ax, obj, options)
@@ -216,6 +257,207 @@ def draw_object(ax, obj, options: PlotOptions, kind: str | None = None) -> None:
         draw_tprofile(ax, obj, options)
     else:
         draw_th1(ax, obj, options)
+
+
+def draw_canvas_on_axis(ax, canvas, options: PlotOptions) -> None:
+    primitives = canvas_drawables(canvas)
+    if not primitives:
+        raise ValueError("TCanvas does not contain supported drawable primitives")
+    if all(canvas_overlay_kind(primitive) for _, primitive in primitives):
+        draw_canvas_overlay(ax, canvas, primitives, options)
+    else:
+        draw_object(ax, primitives[0][1], options)
+        ax.text(
+            0.99,
+            0.98,
+            f"TCanvas: rendered first of {len(primitives)} primitives",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#606b7b",
+        )
+
+
+def draw_canvas_overlay(ax, canvas, primitives: list[tuple[str, object]], options: PlotOptions) -> None:
+    colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["#1f77b4"])
+    for index, (name, primitive) in enumerate(primitives):
+        color = colors[index % len(colors)]
+        draw_canvas_overlay_primitive(ax, primitive, options, color, name)
+
+    apply_canvas_labels(ax, canvas, primitives[0][1], options)
+    if options.show_legend:
+        legend = ax.legend(frameon=False, fontsize=options.tick_font_size)
+        for text in legend.get_texts():
+            text.set_color(options.text_color)
+
+
+def draw_canvas_overlay_primitive(ax, obj, options: PlotOptions, color: str, label: str) -> None:
+    kind = plot_kind(obj)
+    if kind == "TGraph":
+        x_values, y_values, x_errors, y_errors = graph_arrays(obj)
+        ax.plot(
+            x_values,
+            y_values,
+            color=color,
+            linewidth=options.line_width,
+            linestyle=matplotlib_line_style(options.line_style),
+            marker=matplotlib_marker(options.marker_style),
+            markersize=max(3, options.line_width * 2),
+            alpha=options.line_alpha,
+            label=label,
+        )
+        if options.show_errors and (x_errors is not None or y_errors is not None):
+            ax.errorbar(x_values, y_values, xerr=x_errors, yerr=y_errors, fmt="none", ecolor=color, alpha=0.85)
+        return
+
+    values, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    widths = np.diff(edges)
+    errors = profile_errors(obj, values) if kind == "TProfile" else np.sqrt(np.clip(values, 0, None))
+    if kind != "TProfile":
+        values, errors = normalize_th1(values, errors, widths, options.normalization)
+    ax.step(
+        edges[:-1],
+        values,
+        where="post",
+        color=color,
+        linewidth=options.line_width,
+        linestyle=matplotlib_line_style(options.line_style),
+        alpha=options.line_alpha,
+        label=label,
+    )
+    draw_markers(ax, centers, values, options, color)
+    if options.show_errors:
+        ax.errorbar(centers, values, yerr=errors, fmt="none", ecolor=color, capsize=1.8, alpha=0.85)
+    if options.x_min is None and options.x_max is None:
+        ax.set_xlim(edges[0], edges[-1])
+    if options.y_scale == "linear" and options.y_min is None and options.y_max is None:
+        ax.set_ylim(bottom=0)
+
+
+def draw_canvas_panel(canvas, primitives: list[tuple[str, object]], options: PlotOptions, fig_width: float, fig_height: float):
+    count = len(primitives)
+    columns = min(3, max(1, int(np.ceil(np.sqrt(count)))))
+    rows = int(np.ceil(count / columns))
+    fig, axes = plt.subplots(rows, columns, figsize=(fig_width, fig_height), dpi=options.dpi, squeeze=False)
+    fig.patch.set_facecolor(options.figure_facecolor)
+
+    for ax in axes.ravel():
+        ax.set_visible(False)
+    for ax, (name, primitive) in zip(axes.ravel(), primitives):
+        ax.set_visible(True)
+        ax.set_facecolor(options.axes_facecolor)
+        panel_options = options_without_global_labels(options)
+        draw_object(ax, primitive, panel_options)
+        if options.title is None:
+            ax.set_title(safe_label_text(name), pad=8, fontsize=options.title_font_size)
+        apply_ranges_and_scale(ax, options)
+        style_axes(ax, options)
+
+    title = options.title if options.title is not None else member_text(canvas, "fTitle")
+    if title:
+        fig.suptitle(safe_label_text(title), fontsize=options.title_font_size + 1, color=options.text_color)
+    return fig
+
+
+def options_without_global_labels(options: PlotOptions) -> PlotOptions:
+    return PlotOptions(**{**options.__dict__, "title": None, "x_label": None, "y_label": None})
+
+
+def apply_canvas_labels(ax, canvas, first_primitive, options: PlotOptions) -> None:
+    x_label = options.x_label if options.x_label is not None else axis_title(first_primitive, 0) or "x"
+    y_label = options.y_label if options.y_label is not None else axis_title(first_primitive, 1) or "Entries"
+    title = options.title if options.title is not None else member_text(canvas, "fTitle") or member_text(first_primitive, "fTitle")
+    ax.set_xlabel(safe_label_text(x_label), fontsize=options.label_font_size)
+    ax.set_ylabel(safe_label_text(y_label), fontsize=options.label_font_size)
+    ax.set_title(safe_label_text(title), pad=12, fontsize=options.title_font_size)
+    ax.xaxis.label.set_color(options.text_color)
+    ax.yaxis.label.set_color(options.text_color)
+    ax.title.set_color(options.text_color)
+
+
+def canvas_overlay_kind(obj) -> bool:
+    return plot_kind(obj) in {"TH1", "TProfile", "TGraph"}
+
+
+def canvas_drawables(canvas, max_depth: int = 8) -> list[tuple[str, object]]:
+    found = []
+    walk_canvas_primitives(canvas, found, set(), max_depth)
+    return found
+
+
+def walk_canvas_primitives(obj, found: list[tuple[str, object]], seen: set[int], depth: int) -> None:
+    if depth < 0 or id(obj) in seen:
+        return
+    seen.add(id(obj))
+    kind = canvas_primitive_kind(obj)
+    if kind is None:
+        return
+    if kind != "TCanvas":
+        found.append((object_name(obj, f"primitive_{len(found) + 1}"), obj))
+        return
+    for child in primitive_children(obj):
+        walk_canvas_primitives(child, found, seen, depth - 1)
+
+
+def primitive_children(obj) -> list:
+    proxy_primitives = getattr(obj, "_hist_style_primitives", None)
+    if proxy_primitives is not None:
+        return [primitive for _, primitive in proxy_primitives]
+
+    children = []
+    for member_name in ("fPrimitives", "fListOfPrimitives"):
+        try:
+            children.extend(iter_root_collection(obj.member(member_name)))
+        except Exception:
+            pass
+    return [child for child in children if child is not None]
+
+
+def iter_root_collection(collection) -> list:
+    try:
+        return list(collection)
+    except Exception:
+        pass
+    try:
+        return list(collection.values())
+    except Exception:
+        pass
+    for attr in ("_data", "_members"):
+        try:
+            value = getattr(collection, attr)
+            if isinstance(value, dict):
+                return list(value.values())
+            return list(value)
+        except Exception:
+            pass
+    return []
+
+
+def object_name(obj, fallback: str) -> str:
+    for name in ("fName", "fTitle"):
+        value = member_text(obj, name)
+        if value:
+            return value
+    return fallback
+
+
+def canvas_primitive_kind(obj) -> str | None:
+    class_name = getattr(obj, "classname", "")
+    if class_name.startswith("TCanvas") or class_name.startswith("TPad"):
+        return "TCanvas"
+    if class_name.startswith("TProfile2D"):
+        return "TProfile2D"
+    if class_name.startswith("TProfile"):
+        return "TProfile"
+    if class_name.startswith("TH2"):
+        return "TH2"
+    if class_name.startswith("TH1"):
+        return "TH1"
+    if class_name.startswith("TGraph"):
+        return "TGraph"
+    return None
 
 
 def draw_th1(ax, hist, options: PlotOptions) -> None:
@@ -650,10 +892,11 @@ def compare_item(item):
 
 def prepared_compare_item(item, index: int, colors: list[str], options: PlotOptions) -> dict:
     label, hist, custom_color, custom_style, custom_marker, custom_alpha = compare_item(item)
-    values, edges = hist.to_numpy()
+    kind = plot_kind(hist)
+    values, edges = profile_numpy(hist) if kind == "TProfile" else hist.to_numpy()
     widths = np.diff(edges)
-    errors = profile_errors(hist, values) if plot_kind(hist) == "TProfile" else np.sqrt(np.clip(values, 0, None))
-    if plot_kind(hist) != "TProfile":
+    errors = profile_errors(hist, values) if kind == "TProfile" else np.sqrt(np.clip(values, 0, None))
+    if kind != "TProfile":
         values, errors = normalize_th1(values, errors, widths, options.normalization)
     return {
         "label": label,
@@ -705,6 +948,7 @@ def render_panel(
     columns: int = 2,
     shared_x: bool = False,
     shared_y: bool = False,
+    shared_z: bool = False,
     equal_ranges: bool = False,
     panel_titles: bool = True,
     global_title: str | None = None,
@@ -730,10 +974,14 @@ def render_panel(
         fig.patch.set_facecolor(options.figure_facecolor)
         axes_array = np.asarray(axes).reshape(-1)
         equal_limits = panel_equal_limits(objects) if equal_ranges else None
+        shared_z_limits = panel_z_limits(objects, options) if shared_z else None
 
         for ax, (path, obj) in zip(axes_array, objects):
             ax.set_facecolor(options.axes_facecolor)
             panel_options = PlotOptions(**{**options.__dict__, "title": path if panel_titles else ""})
+            if shared_z_limits and plot_kind(obj) in {"TH2", "TProfile2D"}:
+                panel_options.z_min = shared_z_limits[0]
+                panel_options.z_max = shared_z_limits[1]
             draw_object(ax, obj, panel_options)
             if equal_limits:
                 ax.set_xlim(equal_limits[0], equal_limits[1])
@@ -794,6 +1042,39 @@ def panel_equal_limits(objects: list[tuple[str, object]]):
     else:
         y_max += 1.0
     return min(x_min_values), max(x_max_values), y_min, y_max
+
+
+def panel_z_limits(objects: list[tuple[str, object]], options: PlotOptions):
+    values = []
+    for _, obj in objects:
+        try:
+            kind = plot_kind(obj)
+            if kind == "TH2":
+                z_values, _, _ = obj.to_numpy()
+            elif kind == "TProfile2D":
+                z_values, _, _ = profile2d_numpy(obj)
+            else:
+                continue
+            z_array = np.asarray(z_values, dtype=float)
+            z_array = z_array[np.isfinite(z_array)]
+            if options.z_scale == "log":
+                z_array = z_array[z_array > 0]
+            if z_array.size:
+                values.append(z_array)
+        except Exception:
+            continue
+
+    if not values:
+        return None
+
+    merged = np.concatenate(values)
+    z_min = options.z_min if options.z_min is not None else float(np.nanmin(merged))
+    z_max = options.z_max if options.z_max is not None else float(np.nanmax(merged))
+    if options.z_scale == "log" and z_min <= 0:
+        z_min = float(np.nanmin(merged[merged > 0]))
+    if z_max <= z_min:
+        z_max = z_min * 10.0 if options.z_scale == "log" and z_min > 0 else z_min + 1.0
+    return z_min, z_max
 
 
 def normalize_th1(values, errors, widths, normalization: str):

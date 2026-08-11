@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Histogram Style Web</title>
+    <title>RootFrame</title>
     <link rel="icon" href="/static/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" href="/static/favicon-32.png" />
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
@@ -12,7 +12,9 @@
   <body>
     <main class="app">
       <section class="sidebar">
-        <h1>Histogram Style Web</h1>
+        <h1 class="brand-logo">
+          <img src="/static/rootframe-logo.png?v=__ASSET_VERSION__" alt="RootFrame" />
+        </h1>
         <label id="dropZone" class="drop-zone">
           <input id="fileInput" type="file" accept=".root" />
           <span>Drop ROOT file here</span>
@@ -48,6 +50,7 @@
                 <option value="dark">Dark slides</option>
               </select>
             </label>
+            <button id="resetSettingsButton" class="ghost-button reset-button" type="button" title="Restore default render settings">Reset</button>
             <label>
               <span>DPI</span>
               <select id="dpiInput">
@@ -253,6 +256,10 @@
               <label class="checkbox-label">
                 <input id="panelSharedYInput" type="checkbox" />
                 <span>Shared Y</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="panelSharedZInput" type="checkbox" />
+                <span>Shared Z</span>
               </label>
               <label class="checkbox-label">
                 <input id="panelEqualRangesInput" type="checkbox" />

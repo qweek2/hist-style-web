@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from plotting import PlotOptions, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
-from root_reader import get_histogram, histogram_summary, list_histograms, llm_export_payload, object_info
+from root_reader import canvas_drawables, get_histogram, histogram_summary, list_histograms, list_root_folders, llm_export_payload, object_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -94,7 +94,7 @@ async def upload_root_file(file: UploadFile = File(...)):
         FILES.pop(file_id, None)
         raise HTTPException(status_code=400, detail=f"Cannot read ROOT file: {exc}") from exc
 
-    return {"fileId": file_id, "histograms": histograms}
+    return {"fileId": file_id, "histograms": histograms, "folders": list_root_folders(target)}
 
 
 @app.post("/api/open-local-root")
@@ -128,6 +128,7 @@ def open_local_root_file(payload: dict):
     return {
         "fileId": file_id,
         "histograms": histograms,
+        "folders": list_root_folders(root_path),
         "rootFileName": root_path.name,
         "rootFilePath": str(root_path),
     }
@@ -137,7 +138,7 @@ def open_local_root_file(payload: dict):
 def histograms(file_id: str):
     root_path = file_path(file_id)
     try:
-        return {"histograms": list_histograms(root_path)}
+        return {"histograms": list_histograms(root_path), "folders": list_root_folders(root_path)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cannot read ROOT file: {exc}") from exc
 
@@ -413,6 +414,7 @@ def panel(file_id: str, payload: dict):
                 columns=columns,
                 shared_x=bool(payload.get("sharedX", False)),
                 shared_y=bool(payload.get("sharedY", False)),
+                shared_z=bool(payload.get("sharedZ", False)),
                 equal_ranges=bool(payload.get("equalRanges", False)),
                 panel_titles=bool(payload.get("panelTitles", True)),
                 global_title=empty_to_none(payload.get("globalTitle")),
@@ -557,6 +559,9 @@ def options_from_settings(settings: dict) -> PlotOptions:
 def validate_plot_request(obj, options: PlotOptions, allow_fit: bool = True) -> None:
     kind = plot_kind(obj)
     validate_ranges(options)
+    if kind == "TCanvas":
+        validate_canvas_request(obj, options, allow_fit)
+        return
     if options.fit_enabled:
         if not allow_fit:
             raise ValueError("Fit is not available in panel export. Disable fit or export a single object.")
@@ -567,10 +572,30 @@ def validate_plot_request(obj, options: PlotOptions, allow_fit: bool = True) -> 
         raise ValueError("Log X scale requires positive X values")
     if options.y_scale == "log" and not has_positive_y(obj, kind):
         raise ValueError("Log Y scale requires positive Y values")
-    if options.z_scale == "log" and kind not in {"TH2", "TProfile2D"}:
-        raise ValueError("Log Z scale is available for TH2/TProfile2D objects only")
     if options.z_scale == "log" and kind in {"TH2", "TProfile2D"} and not has_positive_z(obj):
         raise ValueError("Log Z scale requires positive bin contents")
+
+
+def validate_canvas_request(obj, options: PlotOptions, allow_fit: bool = True) -> None:
+    primitives = canvas_drawables(obj)
+    if not primitives:
+        raise ValueError("TCanvas does not contain supported drawable primitives")
+    if options.fit_enabled:
+        raise ValueError("Fit is not available for TCanvas. Select an individual TH1/TProfile object for fitting.")
+    if options.z_scale == "log":
+        z_objects = [primitive for _, primitive in primitives if plot_kind(primitive) in {"TH2", "TProfile2D"}]
+        if not z_objects:
+            raise ValueError("Log Z scale is available only when the TCanvas contains TH2/TProfile2D primitives")
+        if any(not has_positive_z(primitive) for primitive in z_objects):
+            raise ValueError("Log Z scale requires positive bin contents")
+    if options.x_scale == "log":
+        for _, primitive in primitives:
+            if not has_positive_x(primitive, plot_kind(primitive)):
+                raise ValueError("Log X scale requires positive X values")
+    if options.y_scale == "log":
+        for _, primitive in primitives:
+            if not has_positive_y(primitive, plot_kind(primitive)):
+                raise ValueError("Log Y scale requires positive Y values")
 
 
 def validate_compare_request(histograms: list[tuple], options: PlotOptions) -> None:
@@ -586,9 +611,10 @@ def validate_compare_request(histograms: list[tuple], options: PlotOptions) -> N
             if not has_positive_y(hist, plot_kind(hist)):
                 raise ValueError("Log Y scale requires positive Y values for all compared objects")
     if options.compare_mode != "overlay":
-        reference_edges = histograms[0][1].to_numpy()[1]
+        reference = histograms[0][1]
+        reference_edges = profile_numpy(reference)[1] if plot_kind(reference) == "TProfile" else reference.to_numpy()[1]
         for _, hist, *_ in histograms[1:]:
-            edges = hist.to_numpy()[1]
+            edges = profile_numpy(hist)[1] if plot_kind(hist) == "TProfile" else hist.to_numpy()[1]
             if len(edges) != len(reference_edges) or not np.allclose(edges, reference_edges):
                 raise ValueError("Ratio/difference compare requires identical binning")
 
@@ -916,13 +942,18 @@ def safe_name(value: str) -> str:
 
 def summary_line(root_path: Path, hist_path: str) -> str:
     summary = histogram_summary(root_path, hist_path)
+    if summary["kind"] == "TCanvas":
+        return (
+            f"Canvas primitives: {summary['primitiveCount']} | "
+            f"Kinds: {', '.join(summary['primitiveKinds']) if summary['primitiveKinds'] else 'none'}"
+        )
     if summary["kind"] == "TGraph":
         return (
             f"Points: {summary['points']} | "
             f"Mean X/Y: {format_number(summary['meanX'])} / {format_number(summary['meanY'])} | "
             f"RMS X/Y: {format_number(summary['rmsX'])} / {format_number(summary['rmsY'])}"
         )
-    if summary["kind"] == "TH2":
+    if summary["kind"] in {"TH2", "TProfile2D"}:
         return (
             f"Entries: {format_number(summary['entries'])} | "
             f"Integral: {format_number(summary['integral'])} | "
