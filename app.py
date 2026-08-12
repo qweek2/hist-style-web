@@ -94,7 +94,12 @@ async def upload_root_file(file: UploadFile = File(...)):
         FILES.pop(file_id, None)
         raise HTTPException(status_code=400, detail=f"Cannot read ROOT file: {exc}") from exc
 
-    return {"fileId": file_id, "histograms": histograms, "folders": list_root_folders(target)}
+    return {
+        "fileId": file_id,
+        "rootFileName": file.filename,
+        "histograms": histograms,
+        "folders": list_root_folders(target),
+    }
 
 
 @app.post("/api/open-local-root")
@@ -354,23 +359,25 @@ def compare(file_id: str, payload: dict):
     if image_format not in {"png", "pdf", "svg"}:
         raise HTTPException(status_code=400, detail="Format must be png, pdf, or svg")
 
-    paths = payload.get("paths", [])
+    object_refs = object_references(file_id, payload)
     labels = payload.get("labels", [])
     colors = payload.get("colors", [])
     styles = payload.get("styles", [])
     markers = payload.get("markers", [])
     alphas = payload.get("alphas", [])
-    if len(paths) < 2:
+    if len(object_refs) < 2:
         raise HTTPException(status_code=400, detail="Select at least two TH1/TProfile objects")
 
     try:
         options = options_from_settings(payload.get("settings", {}))
         histograms = []
-        for index, path in enumerate(paths):
-            hist = get_histogram(root_path, path)
+        for index, reference in enumerate(object_refs):
+            source_path = file_path(reference["fileId"])
+            path = reference["path"]
+            hist = get_histogram(source_path, path)
             if plot_kind(hist) not in {"TH1", "TProfile"}:
                 raise HTTPException(status_code=400, detail="Compare supports TH1 and TProfile only")
-            label = labels[index] if index < len(labels) and labels[index] else path
+            label = labels[index] if index < len(labels) and labels[index] else reference["label"]
             color = colors[index] if index < len(colors) and colors[index] else None
             style = styles[index] if index < len(styles) and styles[index] else None
             marker = markers[index] if index < len(markers) and markers[index] else None
@@ -396,14 +403,17 @@ def panel(file_id: str, payload: dict):
     if image_format not in {"png", "pdf", "svg"}:
         raise HTTPException(status_code=400, detail="Format must be png, pdf, or svg")
 
-    paths = payload.get("paths", [])
-    if not paths:
+    object_refs = object_references(file_id, payload)
+    if not object_refs:
         raise HTTPException(status_code=400, detail="Select at least one object")
 
     try:
         options = options_from_settings(payload.get("settings", {}))
         columns = int(payload.get("columns", 2))
-        objects = [(path, get_histogram(root_path, path)) for path in paths]
+        objects = [
+            (reference["label"], get_histogram(file_path(reference["fileId"]), reference["path"]))
+            for reference in object_refs
+        ]
         for _, obj in objects:
             validate_plot_request(obj, options, allow_fit=False)
         with PLOT_LOCK:
@@ -432,6 +442,33 @@ def file_path(file_id: str) -> Path:
     if not root_path or not root_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return root_path
+
+
+def object_references(default_file_id: str, payload: dict) -> list[dict]:
+    """Normalize legacy paths and multi-file object references."""
+    refs = payload.get("objects")
+    if refs is None:
+        refs = [{"fileId": default_file_id, "path": path} for path in payload.get("paths", [])]
+    if not isinstance(refs, list):
+        raise HTTPException(status_code=400, detail="Objects must be a list")
+
+    normalized = []
+    for reference in refs:
+        if isinstance(reference, str):
+            reference = {"fileId": default_file_id, "path": reference}
+        if not isinstance(reference, dict) or not reference.get("path"):
+            raise HTTPException(status_code=400, detail="Each object must have a path")
+        source_file_id = str(reference.get("fileId") or default_file_id)
+        path = str(reference["path"])
+        file_path(source_file_id)
+        normalized.append(
+            {
+                "fileId": source_file_id,
+                "path": path,
+                "label": str(reference.get("label") or path),
+            }
+        )
+    return normalized
 
 
 def app_metadata() -> dict:

@@ -13,7 +13,7 @@ comparison, multi-panel figures, analysis, fitting, and export.
 
 ## What You Can Do
 
-- Drag and drop a `.root` file into the browser.
+- Drag and drop one or more `.root` files into the browser and keep them in one workspace.
 - Browse supported ROOT objects recursively in a collapsible folder tree, including
   objects stored inside nested `TDirectory` folders.
 - Render `TH1`, `TH2`, `TProfile`, `TProfile2D`, and `TGraph` objects.
@@ -22,6 +22,8 @@ comparison, multi-panel figures, analysis, fitting, and export.
   scales, DPI, aspect ratio, colormaps, and normalization.
 - Compare multiple 1D histograms or profiles as overlays, ratios,
   differences, or percent differences.
+- Compare objects from different ROOT files; each object keeps its source file
+  identity to avoid collisions between equal ROOT paths.
 - Build and preview multi-panel figures before exporting.
 - Run lightweight analysis on selected 1D ranges.
 - Add quick visual fits and inspect fit quality summaries.

@@ -15,6 +15,7 @@ def test_version_endpoint_and_cache_headers():
     index_response = client.get("/")
     assert index_response.status_code == 200
     assert 'id="resetSettingsButton"' in index_response.text
+    assert 'id="fileInput" type="file" accept=".root" multiple' in index_response.text
     assert index_response.headers["cache-control"].startswith("no-store")
     assert f"/static/style.css?v={app.ASSET_VERSION}" in index_response.text
     assert f"/static/app.js?v={app.ASSET_VERSION}" in index_response.text
@@ -77,6 +78,20 @@ def test_fit_required_points_for_supported_models():
 
 def test_safe_name_replaces_path_unsafe_characters():
     assert app.safe_name('dir/name:with*bad?"chars|') == "dir_name_with_bad_chars_"
+
+
+def test_object_references_support_multiple_files(monkeypatch):
+    first = Path("app.py").resolve()
+    second = Path("plotting.py").resolve()
+    monkeypatch.setitem(app.FILES, "first", first)
+    monkeypatch.setitem(app.FILES, "second", second)
+
+    refs = app.object_references(
+        "first",
+        {"objects": [{"fileId": "first", "path": "h1"}, {"fileId": "second", "path": "h1"}]},
+    )
+
+    assert [(ref["fileId"], ref["path"]) for ref in refs] == [("first", "h1"), ("second", "h1")]
 
 
 def test_export_manifest_contains_reproducibility_metadata():

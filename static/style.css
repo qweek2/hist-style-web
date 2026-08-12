@@ -127,6 +127,22 @@ body {
   user-select: none;
 }
 
+.file-group-header {
+  margin-top: 8px;
+  padding: 8px 8px 5px;
+  border-bottom: 1px solid #d9e0ea;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-group-header:first-child {
+  margin-top: 0;
+}
+
 .folder-toggle {
   width: 20px;
   height: 22px;
@@ -139,7 +155,8 @@ body {
 
 .hist-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
   column-gap: 6px;
   width: 100%;
   border: 1px solid #d9e0ea;
@@ -164,16 +181,22 @@ body {
 
 .hist-item span {
   display: block;
+  min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 12px;
   font-weight: 600;
 }
 
 .hist-item small {
   display: block;
+  min-width: 0;
   margin-top: 2px;
   color: #68778c;
-  font-size: 11px;
+  font-size: 9px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .preview {

@@ -87,6 +87,7 @@ let currentFileId = null;
 let currentHist = null;
 let currentRootFileName = "";
 let currentRootFilePath = "";
+const loadedFiles = new Map();
 let refreshTimer = null;
 let analysisTimer = null;
 let metadataTimer = null;
@@ -111,6 +112,10 @@ let selectionDrag = null;
 let lastDiagnostics = {
   status: "No errors yet.",
 };
+
+function activeFileId() {
+  return currentHist?.fileId || currentFileId;
+}
 const legendSettings = new Map();
 
 const globalSettings = {
@@ -268,7 +273,8 @@ const PRESETS = {
 };
 
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+  Array.from(fileInput.files).forEach((file) => uploadFile(file, true));
+  fileInput.value = "";
 });
 openRootPathButton.addEventListener("click", () => openLocalRootPath(rootPathInput.value));
 tabButtons.forEach((button) => {
@@ -336,11 +342,11 @@ scaleControls.forEach((control) => {
 
 customInput.addEventListener("change", () => {
   if (!currentHist) return;
-  if (customInput.checked && !histSettings.has(currentHist.path)) {
-    histSettings.set(currentHist.path, { ...globalSettings });
+  if (customInput.checked && !histSettings.has(currentHist.ref)) {
+    histSettings.set(currentHist.ref, { ...globalSettings });
   }
   if (!customInput.checked) {
-    histSettings.delete(currentHist.path);
+    histSettings.delete(currentHist.ref);
   }
   loadSettingsToForm();
   refreshPlotSoon();
@@ -358,8 +364,7 @@ dropZone.addEventListener("dragleave", () => {
 dropZone.addEventListener("drop", (event) => {
   event.preventDefault();
   dropZone.classList.remove("active");
-  const file = event.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  Array.from(event.dataTransfer.files).forEach((file) => uploadFile(file, true));
 });
 
 function activateTab(name) {
@@ -378,8 +383,8 @@ function activateTab(name) {
   }
 }
 
-async function uploadFile(file) {
-  showStatus("Uploading...");
+async function uploadFile(file, append = false) {
+  showStatus(`Uploading ${file.name}...`);
   histList.innerHTML = "";
   plotImage.removeAttribute("src");
   summaryLine.textContent = "";
@@ -411,7 +416,7 @@ async function uploadFile(file) {
   const data = await response.json();
   const typedPath = rootPathInput.value.trim();
   const typedName = typedPath.split(/[\\/]/).pop();
-  setLoadedRootFile(data, file.name, typedName === file.name ? typedPath : "");
+  setLoadedRootFile(data, file.name, typedName === file.name ? typedPath : "", append && allHistograms.length > 0);
 }
 
 async function openLocalRootPath(path, silent = false) {
@@ -436,23 +441,37 @@ async function openLocalRootPath(path, silent = false) {
   }
 
   const data = await response.json();
-  setLoadedRootFile(data, data.rootFileName || rootPath.split(/[\\/]/).pop(), data.rootFilePath || rootPath);
+  setLoadedRootFile(
+    data,
+    data.rootFileName || rootPath.split(/[\\/]/).pop(),
+    data.rootFilePath || rootPath,
+    allHistograms.length > 0,
+  );
 }
 
-function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
+function setLoadedRootFile(data, rootFileName, rootFilePath = "", append = false) {
   currentFileId = data.fileId;
   currentRootFileName = rootFileName || "";
   currentRootFilePath = rootFilePath || "";
   rootPathInput.value = currentRootFilePath;
-  currentHist = null;
-  allHistograms = data.histograms;
+  loadedFiles.set(data.fileId, { fileId: data.fileId, rootFileName, rootFilePath, folders: data.folders || [] });
+  const fileHistograms = data.histograms.map((hist) => ({
+    ...hist,
+    fileId: data.fileId,
+    rootFileName,
+    ref: `${data.fileId}::${hist.path}`,
+  }));
+  currentHist = append ? currentHist : null;
+  allHistograms = append ? [...allHistograms, ...fileHistograms] : fileHistograms;
   rootFolders = data.folders || [];
   expandedFolders.clear();
-  comparePaths.clear();
-  legendSettings.clear();
-  compareMode = false;
-  panelMode = false;
-  histSettings.clear();
+  if (!append) comparePaths.clear();
+  if (!append) legendSettings.clear();
+  if (!append) {
+    compareMode = false;
+    panelMode = false;
+    histSettings.clear();
+  }
   customInput.checked = false;
   customInput.disabled = true;
   exportAllButton.disabled = false;
@@ -463,95 +482,108 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "") {
   updateSelectionOverlay();
   analysisResults.textContent = "Select a 1D object";
   analysisWarnings.innerHTML = "<li>No object selected</li>";
-  showStatus(`${data.histograms.length} objects found${rootFolders.length ? ` in ${rootFolders.length} folders` : ""}`);
+  showStatus(`${allHistograms.length} objects from ${loadedFiles.size} ROOT file${loadedFiles.size === 1 ? "" : "s"}`);
   renderHistogramList(filteredHistograms());
 }
 
 function renderHistogramList(histograms) {
   histList.innerHTML = "";
-
-  const query = searchInput.value.trim().toLowerCase();
-  const folders = new Set();
-  for (const hist of histograms) {
-    const parts = hist.path.split("/");
-    for (let index = 1; index < parts.length; index += 1) {
-      folders.add(parts.slice(0, index).join("/"));
-    }
-  }
-  for (const folder of rootFolders) {
-    if (!query || histograms.some((hist) => hist.path.startsWith(`${folder.path}/`))) {
-      folders.add(folder.path);
-    }
-  }
-
   const appendHistogramItem = (hist, depth = 0) => {
     const button = document.createElement("button");
     button.className = "hist-item";
     button.type = "button";
-    button.dataset.path = hist.path;
+    button.dataset.path = hist.ref;
     button.style.paddingLeft = `${9 + depth * 14}px`;
     button.innerHTML = `
-      <input class="compare-check" type="checkbox" ${comparePaths.has(hist.path) ? "checked" : ""} />
+      <input class="compare-check" type="checkbox" ${comparePaths.has(hist.ref) ? "checked" : ""} />
       <span>${escapeHtml(hist.path.split("/").pop())}</span>
-      <small>${escapeHtml(hist.className)}</small>
+      <small>${escapeHtml(hist.rootFileName)} · ${escapeHtml(hist.className)}</small>
     `;
     button.title = hist.path;
     button.querySelector(".compare-check").addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleCompare(hist.path, event.target.checked);
+      toggleCompare(hist.ref, event.target.checked);
     });
     button.addEventListener("click", () => selectHistogram(hist, button));
     histList.appendChild(button);
   };
 
-  const appendFolder = (folderPath, depth) => {
-    const directFolders = Array.from(folders)
+  const appendFileTree = (fileHistograms, fileFolders) => {
+    const folders = new Set(fileFolders.map((folder) => folder.path));
+    for (const hist of fileHistograms) {
+      const parts = hist.path.split("/");
+      for (let index = 1; index < parts.length; index += 1) {
+        folders.add(parts.slice(0, index).join("/"));
+      }
+    }
+
+    const appendFolder = (folderPath, depth) => {
+      const directFolders = Array.from(folders)
       .filter((path) => path !== folderPath && path.startsWith(`${folderPath}/`) && path.slice(folderPath.length + 1).indexOf("/") === -1)
       .sort((a, b) => a.localeCompare(b));
-    const directObjects = histograms
+      const directObjects = fileHistograms
       .filter((hist) => {
         const parent = hist.path.includes("/") ? hist.path.slice(0, hist.path.lastIndexOf("/")) : "";
         return parent === folderPath;
       })
       .sort((a, b) => a.path.localeCompare(b.path));
 
-    for (const child of directFolders) {
+      for (const child of directFolders) {
       const row = document.createElement("div");
       row.className = "folder-row";
       row.style.paddingLeft = `${8 + depth * 14}px`;
-      const isOpen = expandedFolders.has(child);
+        const childKey = `${fileHistograms[0]?.fileId}:${child}`;
+        const isOpen = expandedFolders.has(childKey);
       row.innerHTML = `<button type="button" class="folder-toggle" aria-expanded="${isOpen}">${isOpen ? "▾" : "▸"}</button><span>${escapeHtml(child.split("/").pop())}</span>`;
       row.title = child;
       row.querySelector(".folder-toggle").addEventListener("click", () => {
-        if (expandedFolders.has(child)) expandedFolders.delete(child);
-        else expandedFolders.add(child);
+        if (expandedFolders.has(childKey)) expandedFolders.delete(childKey);
+        else expandedFolders.add(childKey);
         renderHistogramList(filteredHistograms());
       });
       histList.appendChild(row);
       if (isOpen) appendFolder(child, depth + 1);
-    }
+      }
 
-    for (const hist of directObjects) {
-      appendHistogramItem(hist, depth + 1);
+      for (const hist of directObjects) {
+        appendHistogramItem(hist, depth + 1);
+      }
+    };
+
+    for (const hist of fileHistograms.filter((item) => !item.path.includes("/")).sort((a, b) => a.path.localeCompare(b.path))) {
+      appendHistogramItem(hist, 1);
+    }
+    for (const folder of Array.from(folders).filter((path) => !path.includes("/")).sort()) {
+      const row = document.createElement("div");
+      row.className = "folder-row";
+      row.style.paddingLeft = "14px";
+      const isOpen = expandedFolders.has(`${fileHistograms[0]?.fileId}:${folder}`);
+      row.innerHTML = `<button type="button" class="folder-toggle" aria-expanded="${isOpen}">${isOpen ? "▾" : "▸"}</button><span>${escapeHtml(folder)}</span>`;
+      row.title = folder;
+      row.querySelector(".folder-toggle").addEventListener("click", () => {
+        const key = `${fileHistograms[0]?.fileId}:${folder}`;
+        if (expandedFolders.has(key)) expandedFolders.delete(key);
+        else expandedFolders.add(key);
+        renderHistogramList(filteredHistograms());
+      });
+      histList.appendChild(row);
+      if (isOpen) appendFolder(folder, 2);
     }
   };
 
-  for (const hist of histograms.filter((item) => !item.path.includes("/")).sort((a, b) => a.path.localeCompare(b.path))) {
-    appendHistogramItem(hist, 0);
+  const fileGroups = new Map();
+  for (const hist of histograms) {
+    if (!fileGroups.has(hist.fileId)) fileGroups.set(hist.fileId, []);
+    fileGroups.get(hist.fileId).push(hist);
   }
-  for (const folder of Array.from(folders).filter((path) => !path.includes("/")).sort()) {
-    const row = document.createElement("div");
-    row.className = "folder-row";
-    const isOpen = expandedFolders.has(folder);
-    row.innerHTML = `<button type="button" class="folder-toggle" aria-expanded="${isOpen}">${isOpen ? "▾" : "▸"}</button><span>${escapeHtml(folder)}</span>`;
-    row.title = folder;
-    row.querySelector(".folder-toggle").addEventListener("click", () => {
-      if (expandedFolders.has(folder)) expandedFolders.delete(folder);
-      else expandedFolders.add(folder);
-      renderHistogramList(filteredHistograms());
-    });
-    histList.appendChild(row);
-    if (isOpen) appendFolder(folder, 1);
+  for (const [fileId, fileHistograms] of fileGroups) {
+    const file = loadedFiles.get(fileId) || {};
+    const header = document.createElement("div");
+    header.className = "file-group-header";
+    header.textContent = file.rootFileName || fileHistograms[0].rootFileName || "ROOT file";
+    header.title = file.rootFilePath || header.textContent;
+    histList.appendChild(header);
+    appendFileTree(fileHistograms, file.folders || []);
   }
   updateCompareButton();
   renderLegendEditor();
@@ -567,7 +599,7 @@ function selectHistogram(hist, button, render = true) {
   compareMode = false;
   panelMode = false;
   customInput.disabled = false;
-  customInput.checked = histSettings.has(hist.path);
+  customInput.checked = histSettings.has(hist.ref);
   loadSettingsToForm();
 
   selectedName.textContent = hist.path;
@@ -581,19 +613,19 @@ function selectHistogram(hist, button, render = true) {
 }
 
 function selectHistogramByPath(path, render = true) {
-  const hist = allHistograms.find((item) => item.path === path);
+  const hist = allHistograms.find((item) => item.ref === path || item.path === path);
   if (!hist) {
     showError("Load project", new Error(`Object not found in current ROOT file: ${path}`));
     return;
   }
   const buttons = Array.from(document.querySelectorAll(".hist-item"));
-  const button = buttons.find((item) => item.dataset.path === path);
+  const button = buttons.find((item) => item.dataset.path === hist.ref);
   if (button) {
     selectHistogram(hist, button, render);
   } else {
     currentHist = hist;
     customInput.disabled = false;
-    customInput.checked = histSettings.has(hist.path);
+    customInput.checked = histSettings.has(hist.ref);
     loadSettingsToForm();
     selectedName.textContent = hist.path;
     downloadLink.classList.remove("disabled");
@@ -636,7 +668,7 @@ function updateCompareButton() {
 
 function selectedComparePaths() {
   return Array.from(comparePaths).filter((path) => {
-    const hist = allHistograms.find((item) => item.path === path);
+    const hist = allHistograms.find((item) => item.ref === path);
     return hist && (hist.kind === "TH1" || hist.kind === "TProfile");
   });
 }
@@ -650,6 +682,13 @@ function refreshPlotSoon() {
     refreshTimer = null;
     refreshPlot();
   }, 250);
+}
+
+function selectedCompareObjects() {
+  return selectedComparePaths().map((ref) => {
+    const hist = allHistograms.find((item) => item.ref === ref);
+    return { fileId: hist.fileId, path: hist.path, label: hist.rootFileName ? `${hist.rootFileName}: ${hist.path}` : hist.path };
+  });
 }
 
 function refreshAnalysisSoon(force = false) {
@@ -783,13 +822,13 @@ async function refreshSummary() {
   const params = new URLSearchParams();
   params.set("path", summaryPath);
 
-  const response = await fetch(`/api/files/${currentFileId}/summary?${params.toString()}`);
+  const response = await fetch(`/api/files/${activeFileId()}/summary?${params.toString()}`);
   if (requestId !== summaryRequestId || currentHist?.path !== summaryPath || compareMode || panelMode) return;
   if (!response.ok) {
     const error = await errorFromResponse(response);
     summaryLine.textContent = `Failed to summarize ${summaryPath}: ${error.message}`;
     setDiagnostics("Summarize object", error, {
-      endpoint: `/api/files/${currentFileId}/summary`,
+      endpoint: `/api/files/${activeFileId()}/summary`,
       path: summaryPath,
     });
     return;
@@ -804,12 +843,12 @@ async function refreshObjectInfo(path) {
   objectInfo.textContent = "Loading...";
   const params = new URLSearchParams();
   params.set("path", path);
-  const response = await fetch(`/api/files/${currentFileId}/info?${params.toString()}`);
+  const response = await fetch(`/api/files/${activeFileId()}/info?${params.toString()}`);
   if (!response.ok) {
     const error = await errorFromResponse(response);
     objectInfo.textContent = `Failed to load info for ${path}: ${error.message}`;
     setDiagnostics("Load object info", error, {
-      endpoint: `/api/files/${currentFileId}/info`,
+      endpoint: `/api/files/${activeFileId()}/info`,
       path,
     });
     return;
@@ -832,14 +871,14 @@ async function refreshAnalysis() {
   };
 
   try {
-    const response = await fetch(`/api/files/${currentFileId}/analysis`, {
+    const response = await fetch(`/api/files/${activeFileId()}/analysis`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
       throw await errorFromResponse(response, {
-        endpoint: `/api/files/${currentFileId}/analysis`,
+        endpoint: `/api/files/${activeFileId()}/analysis`,
         payload,
       });
     }
@@ -868,14 +907,14 @@ async function refreshPlotMetadata() {
   };
 
   try {
-    const response = await fetch(`/api/files/${currentFileId}/plot-metadata`, {
+    const response = await fetch(`/api/files/${activeFileId()}/plot-metadata`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
       throw await errorFromResponse(response, {
-        endpoint: `/api/files/${currentFileId}/plot-metadata`,
+        endpoint: `/api/files/${activeFileId()}/plot-metadata`,
         payload,
       });
     }
@@ -1176,7 +1215,7 @@ function plotUrl(hist, imageFormat = "png") {
   addNumberParam(params, "z_min", settings.zMin);
   addNumberParam(params, "z_max", settings.zMax);
   params.set("image_format", imageFormat);
-  return `/api/files/${currentFileId}/plot?${params.toString()}`;
+  return `/api/files/${activeFileId()}/plot?${params.toString()}`;
 }
 
 function addNumberParam(params, name, value) {
@@ -1205,10 +1244,10 @@ function effectiveSettings(hist) {
 
 function activeSettingsTarget() {
   if (currentHist && customInput.checked) {
-    if (!histSettings.has(currentHist.path)) {
-      histSettings.set(currentHist.path, { ...globalSettings });
+    if (!histSettings.has(currentHist.ref)) {
+      histSettings.set(currentHist.ref, { ...globalSettings });
     }
-    return histSettings.get(currentHist.path);
+    return histSettings.get(currentHist.ref);
   }
   return globalSettings;
 }
@@ -1375,7 +1414,10 @@ function isCurrentPanelRequest(requestId, requestKey) {
 async function fetchPanelImage(imageFormat) {
   const payload = {
     format: imageFormat,
-    paths: Array.from(comparePaths),
+    objects: Array.from(comparePaths).map((ref) => {
+      const hist = allHistograms.find((item) => item.ref === ref);
+      return { fileId: hist.fileId, path: hist.path, label: `${hist.rootFileName}: ${hist.path}` };
+    }),
     columns: panelColumnsInput.value,
     sharedX: panelSharedXInput.checked,
     sharedY: panelSharedYInput.checked,
@@ -1403,7 +1445,10 @@ async function fetchPanelImage(imageFormat) {
 async function fetchCompareImage(imageFormat, paths) {
   const payload = {
     format: imageFormat,
-    paths,
+    objects: paths.map((ref) => {
+      const hist = allHistograms.find((item) => item.ref === ref);
+      return { fileId: hist.fileId, path: hist.path, label: `${hist.rootFileName}: ${hist.path}` };
+    }),
     labels: compareLabels(paths),
     colors: compareColors(paths),
     styles: compareStyles(paths),
@@ -1429,7 +1474,8 @@ function compareLabels(paths) {
   const labels = compareLabelsInput.value.split(/\r?\n/).map((label) => label.trim());
   return paths.map((path, index) => {
     const row = legendSettings.get(path);
-    return row?.label || labels[index] || path;
+    const hist = allHistograms.find((item) => item.ref === path);
+    return row?.label || labels[index] || (hist ? `${hist.rootFileName}: ${hist.path}` : path);
   });
 }
 
