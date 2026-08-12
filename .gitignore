@@ -1,7 +1,10 @@
 __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
-uploads/*.root
+*.root
+*.log
+.env
+.env.*
 exports/*
 !exports/.gitkeep
 tests/artifacts/
