@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 
-from plotting import PlotOptions, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
+from plotting import PlotOptions, normalize_th1, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
 from root_reader import canvas_drawables, get_histogram, histogram_summary, list_histograms, list_root_folders, llm_export_payload, object_info
 
 
@@ -709,7 +709,7 @@ def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: floa
         payload["message"] = "Analysis v1 supports TH1 and TProfile objects"
         return payload
 
-    values, edges = profile_numpy(obj) if kind == "TProfile" else obj.to_numpy()
+    values, edges = analysis_values(obj, kind, options)
     centers = 0.5 * (edges[:-1] + edges[1:])
     mask = np.isfinite(values) & np.isfinite(centers)
     if x_min is not None:
@@ -751,6 +751,17 @@ def analysis_metadata(kind: str, options: PlotOptions) -> dict:
             "z": options.z_scale == "log",
         },
     }
+
+
+def analysis_values(obj, kind: str, options: PlotOptions):
+    if kind == "TProfile":
+        return profile_numpy(obj)
+    values, edges = obj.to_numpy()
+    if kind == "TH1" and options.normalization != "raw":
+        widths = np.diff(edges)
+        errors = np.sqrt(np.clip(values, 0, None))
+        values, _ = normalize_th1(np.asarray(values), errors, widths, options.normalization)
+    return values, edges
 
 
 def integral_definition(normalization: str) -> str:

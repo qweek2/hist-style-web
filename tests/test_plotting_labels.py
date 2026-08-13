@@ -1,6 +1,8 @@
 import numpy as np
 
-from plotting import PlotOptions, ascii_safe_text, panel_z_limits, plain_root_text, safe_label_text, validate_mathtext_label
+from matplotlib.figure import Figure
+
+from plotting import PlotOptions, ascii_safe_text, panel_z_limits, plain_root_text, render_panel, safe_label_text, validate_mathtext_label
 
 
 def test_safe_label_text_converts_root_labels_to_valid_mathtext():
@@ -59,3 +61,22 @@ def test_panel_z_limits_for_log_scale_ignores_non_positive_values():
     )
 
     assert limits == (3.0, 12.0)
+
+
+def test_shared_z_panel_creates_one_colorbar(monkeypatch):
+    calls = []
+    original_colorbar = Figure.colorbar
+
+    def spy_colorbar(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original_colorbar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "colorbar", spy_colorbar)
+    render_panel(
+        [("a", FakeTH2([[1.0, 2.0], [3.0, 4.0]])), ("b", FakeTH2([[4.0, 3.0], [2.0, 1.0]]))],
+        PlotOptions(),
+        columns=2,
+        shared_z=True,
+    )
+
+    assert len(calls) == 1

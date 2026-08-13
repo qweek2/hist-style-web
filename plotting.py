@@ -54,6 +54,7 @@ class PlotOptions:
     y_max: float | None = None
     z_min: float | None = None
     z_max: float | None = None
+    colorbar: bool = True
 
 
 def render_histogram(hist, options: PlotOptions | None = None, image_format: str = "png") -> bytes:
@@ -243,14 +244,14 @@ def render_canvas(canvas, options: PlotOptions, image_format: str) -> bytes:
     return buffer.getvalue()
 
 
-def draw_object(ax, obj, options: PlotOptions, kind: str | None = None) -> None:
+def draw_object(ax, obj, options: PlotOptions, kind: str | None = None):
     kind = kind or plot_kind(obj)
     if kind == "TCanvas":
         draw_canvas_on_axis(ax, obj, options)
     elif kind == "TH2":
-        draw_th2(ax, obj, options)
+        return draw_th2(ax, obj, options)
     elif kind == "TProfile2D":
-        draw_tprofile2d(ax, obj, options)
+        return draw_tprofile2d(ax, obj, options)
     elif kind == "TGraph":
         draw_tgraph(ax, obj, options)
     elif kind == "TProfile":
@@ -595,7 +596,7 @@ def axis_edges_from_member(axis):
     return n_bins, x_min, x_max
 
 
-def draw_th2(ax, hist, options: PlotOptions) -> None:
+def draw_th2(ax, hist, options: PlotOptions):
     values, x_edges, y_edges = hist.to_numpy()
     masked = np.ma.masked_where(values.T <= 0, values.T)
 
@@ -612,15 +613,15 @@ def draw_th2(ax, hist, options: PlotOptions) -> None:
         vmax=None if norm else options.z_max,
         shading="auto",
     )
-    cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
-    cbar.set_label("Entries", color=options.text_color, fontsize=options.label_font_size)
-    cbar.ax.tick_params(labelsize=options.tick_font_size, colors=options.axis_color)
-    cbar.outline.set_edgecolor(options.axis_color)
+    if options.colorbar:
+        cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
+        style_colorbar(cbar, options, "Entries")
 
     apply_labels(ax, hist, options, default_y_label="y")
+    return mesh
 
 
-def draw_tprofile2d(ax, hist, options: PlotOptions) -> None:
+def draw_tprofile2d(ax, hist, options: PlotOptions):
     values, x_edges, y_edges = profile2d_numpy(hist)
     masked = np.ma.masked_invalid(values.T)
     masked = np.ma.masked_where(values.T == 0, masked)
@@ -638,11 +639,17 @@ def draw_tprofile2d(ax, hist, options: PlotOptions) -> None:
         vmax=None if norm else options.z_max,
         shading="auto",
     )
-    cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
-    cbar.set_label("Profile", color=options.text_color, fontsize=options.label_font_size)
+    if options.colorbar:
+        cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
+        style_colorbar(cbar, options, "Profile")
+    apply_labels(ax, hist, options, default_y_label="y")
+    return mesh
+
+
+def style_colorbar(cbar, options: PlotOptions, label: str) -> None:
+    cbar.set_label(label, color=options.text_color, fontsize=options.label_font_size)
     cbar.ax.tick_params(labelsize=options.tick_font_size, colors=options.axis_color)
     cbar.outline.set_edgecolor(options.axis_color)
-    apply_labels(ax, hist, options, default_y_label="y")
 
 
 def profile2d_numpy(hist):
@@ -976,13 +983,20 @@ def render_panel(
         equal_limits = panel_equal_limits(objects) if equal_ranges else None
         shared_z_limits = panel_z_limits(objects, options) if shared_z else None
 
+        meshes = []
+        mesh_labels = []
         for ax, (path, obj) in zip(axes_array, objects):
             ax.set_facecolor(options.axes_facecolor)
             panel_options = PlotOptions(**{**options.__dict__, "title": path if panel_titles else ""})
             if shared_z_limits and plot_kind(obj) in {"TH2", "TProfile2D"}:
                 panel_options.z_min = shared_z_limits[0]
                 panel_options.z_max = shared_z_limits[1]
-            draw_object(ax, obj, panel_options)
+            if shared_z:
+                panel_options.colorbar = False
+            mesh = draw_object(ax, obj, panel_options)
+            if mesh is not None:
+                meshes.append(mesh)
+                mesh_labels.append("Profile" if plot_kind(obj) == "TProfile2D" else "Entries")
             if equal_limits:
                 ax.set_xlim(equal_limits[0], equal_limits[1])
                 ax.set_ylim(equal_limits[2], equal_limits[3])
@@ -991,6 +1005,11 @@ def render_panel(
 
         for ax in axes_array[len(objects):]:
             ax.axis("off")
+
+        if shared_z and meshes:
+            label = "Profile" if mesh_labels and all(item == "Profile" for item in mesh_labels) else "Entries"
+            cbar = fig.colorbar(meshes[0], ax=list(axes_array[:len(objects)]), pad=0.02)
+            style_colorbar(cbar, options, label)
 
         if global_title:
             fig.suptitle(safe_label_text(global_title), color=options.text_color, fontsize=options.title_font_size)

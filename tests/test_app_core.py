@@ -18,11 +18,30 @@ def test_version_endpoint_and_cache_headers():
     assert 'id="fileInput" type="file" accept=".root" multiple' in index_response.text
     assert index_response.headers["cache-control"].startswith("no-store")
     assert f"/static/style.css?v={app.ASSET_VERSION}" in index_response.text
-    assert f"/static/app.js?v={app.ASSET_VERSION}" in index_response.text
+    for asset in (
+        "app-state.js",
+        "app-workspace.js",
+        "app-analysis.js",
+        "app-compare.js",
+        "app-project.js",
+        "app.js",
+    ):
+        assert f"/static/{asset}?v={app.ASSET_VERSION}" in index_response.text
 
     static_response = client.get(f"/static/style.css?v={app.ASSET_VERSION}")
     assert static_response.status_code == 200
     assert "immutable" in static_response.headers["cache-control"]
+    for asset in (
+        "app-state.js",
+        "app-workspace.js",
+        "app-analysis.js",
+        "app-compare.js",
+        "app-project.js",
+        "app.js",
+    ):
+        asset_response = client.get(f"/static/{asset}?v={app.ASSET_VERSION}")
+        assert asset_response.status_code == 200
+        assert "immutable" in asset_response.headers["cache-control"]
 
     version_response = client.get("/api/version")
     assert version_response.status_code == 200
@@ -169,6 +188,18 @@ def test_analysis_warnings_call_out_normalized_fit_and_log_values():
     assert "Log Y scale hides or rejects non-positive values" in warnings
     assert "Normalization changes displayed amplitudes: area = 1" in warnings
     assert "Fit is applied to displayed normalized values, not raw bin contents" in warnings
+
+
+def test_analysis_range_stats_use_displayed_th1_normalization():
+    payload = app.analysis_payload(
+        FakeHist1D([1.0, 3.0]),
+        PlotOptions(normalization="area"),
+        None,
+        None,
+    )
+
+    assert payload["rangeStats"]["integral"] == pytest.approx(1.0)
+    assert payload["rangeStats"]["fraction"] == pytest.approx(1.0)
 
 
 def test_analysis_warnings_call_out_profile_semantics():

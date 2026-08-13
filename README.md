@@ -416,13 +416,9 @@ Uploaded files are stored temporarily in:
 uploads/
 ```
 
-Generated exports are stored in:
-
-```text
-exports/
-```
-
-Both directories are ignored by Git.
+Exports are generated in memory and downloaded by the browser. Uploaded ROOT
+files are stored temporarily in `uploads/`, and both local runtime directories
+are ignored by Git.
 
 ## Configuration
 
@@ -540,10 +536,14 @@ hist-style-web/
   root_reader.py
   static/
     index.html
-    app.js
+    app-state.js
+    app-workspace.js
+    app-analysis.js
+    app-compare.js
+    app-project.js
+    app.js                 # event wiring and tab coordination
     style.css
   uploads/
-  exports/
   requirements.txt
   Dockerfile
   render.yaml

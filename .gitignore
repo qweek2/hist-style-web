@@ -5,8 +5,6 @@ pytest-cache-files-*/
 *.log
 .env
 .env.*
-exports/*
-!exports/.gitkeep
 tests/artifacts/
 tests/__pycache__/
 tests/ui_smoke.py
