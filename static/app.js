@@ -102,6 +102,7 @@ let postRenderRefreshQueued = false;
 let allHistograms = [];
 let rootFolders = [];
 const expandedFolders = new Set();
+const collapsedFileGroups = new Set();
 let comparePaths = new Set();
 let compareMode = false;
 let panelMode = false;
@@ -455,6 +456,7 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "", append = false
   currentRootFilePath = rootFilePath || "";
   rootPathInput.value = currentRootFilePath;
   loadedFiles.set(data.fileId, { fileId: data.fileId, rootFileName, rootFilePath, folders: data.folders || [] });
+  collapsedFileGroups.add(data.fileId);
   const fileHistograms = data.histograms.map((hist) => ({
     ...hist,
     fileId: data.fileId,
@@ -578,12 +580,21 @@ function renderHistogramList(histograms) {
   }
   for (const [fileId, fileHistograms] of fileGroups) {
     const file = loadedFiles.get(fileId) || {};
-    const header = document.createElement("div");
+    const isSearching = Boolean(searchInput.value.trim());
+    const isCollapsed = collapsedFileGroups.has(fileId) && !isSearching;
+    const header = document.createElement("button");
     header.className = "file-group-header";
-    header.textContent = file.rootFileName || fileHistograms[0].rootFileName || "ROOT file";
+    header.type = "button";
+    header.setAttribute("aria-expanded", String(!isCollapsed));
+    header.innerHTML = `<span class="file-group-chevron">${isCollapsed ? "▸" : "▾"}</span><span class="file-group-name">${escapeHtml(file.rootFileName || fileHistograms[0].rootFileName || "ROOT file")}</span><span class="file-group-count">${fileHistograms.length}</span>`;
     header.title = file.rootFilePath || header.textContent;
+    header.addEventListener("click", () => {
+      if (collapsedFileGroups.has(fileId)) collapsedFileGroups.delete(fileId);
+      else collapsedFileGroups.add(fileId);
+      renderHistogramList(filteredHistograms());
+    });
     histList.appendChild(header);
-    appendFileTree(fileHistograms, file.folders || []);
+    if (!isCollapsed) appendFileTree(fileHistograms, file.folders || []);
   }
   updateCompareButton();
   renderLegendEditor();
