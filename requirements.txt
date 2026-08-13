@@ -1,6 +1,6 @@
 fastapi==0.136.1
 uvicorn[standard]==0.44.0
-python-multipart==0.0.27
+python-multipart==0.0.31
 uproot==5.7.3
 numpy==2.4.4
 matplotlib==3.10.9
