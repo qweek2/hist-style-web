@@ -25,9 +25,19 @@
         </div>
         <div id="status" class="status">No file loaded</div>
         <input id="searchInput" class="search-input" type="search" placeholder="Search histograms" />
-        <button id="compareButton" class="button compare-button" type="button" disabled>Compare selected</button>
-        <button id="previewPanelButton" class="ghost-button compare-button" type="button" disabled>Preview panel</button>
-        <button id="panelButton" class="ghost-button compare-button" type="button" disabled>Export panel</button>
+        <div class="hist-filters">
+          <select id="fileFilterInput" aria-label="Filter by ROOT file"><option value="">All files</option></select>
+          <select id="kindFilterInput" aria-label="Filter by object type"><option value="">All types</option></select>
+          <select id="folderFilterInput" aria-label="Filter by folder"><option value="">All folders</option></select>
+        </div>
+        <div class="selection-actions">
+          <button id="compareButton" class="button compare-button" type="button" disabled>Compare selected</button>
+          <button id="exportSelectedButton" class="ghost-button compare-button" type="button" disabled>Export selected</button>
+          <button id="previewPanelButton" class="ghost-button compare-button" type="button" disabled>Preview panel</button>
+          <button id="panelButton" class="ghost-button compare-button" type="button" disabled>Export panel</button>
+          <button id="applySelectedStyleButton" class="ghost-button compare-button" type="button" disabled>Apply preset to selected</button>
+          <span class="selection-action-empty" aria-hidden="true"></span>
+        </div>
         <div id="histList" class="hist-list"></div>
       </section>
 
@@ -112,6 +122,22 @@
                 <option value="gray">gray</option>
               </select>
             </label>
+            <label class="checkbox-label">
+              <input id="showBinValuesInput" type="checkbox" />
+              <span>Show bin values (TEXT)</span>
+            </label>
+            <label>
+              <span>TEXT font size</span>
+              <select id="textFontSizeInput">
+                <option value="auto" selected>Auto (fit cells)</option>
+                <option value="3">3 pt</option>
+                <option value="4">4 pt</option>
+                <option value="5">5 pt</option>
+                <option value="6">6 pt</option>
+                <option value="8">8 pt</option>
+                <option value="10">10 pt</option>
+              </select>
+            </label>
             <label>
               <span>Normalize</span>
               <select id="normalizationInput">
@@ -168,12 +194,29 @@
                   <option value="ratio">ratio</option>
                   <option value="difference">difference</option>
                   <option value="relative_difference">% difference</option>
+                  <option value="symmetric_difference">symmetric difference</option>
+                  <option value="pull">pull</option>
                 </select>
               </label>
               <label class="checkbox-label">
                 <input id="uncertaintyBandInput" type="checkbox" />
                 <span>Reference band</span>
               </label>
+              <label>
+                <span>Derived operation</span>
+                <select id="derivedOperationInput">
+                  <option value="subtract">A - B</option>
+                  <option value="add">A + B</option>
+                  <option value="ratio">A / B</option>
+                  <option value="scale">A × coefficient</option>
+                  <option value="normalize">Normalize A</option>
+                </select>
+              </label>
+              <label><span>A</span><select id="derivedAInput"></select></label>
+              <label><span>B</span><select id="derivedBInput"></select></label>
+              <label><span>Coefficient</span><input id="derivedCoefficientInput" type="number" step="any" value="1" /></label>
+              <label class="label-input"><span>Output name</span><input id="derivedNameInput" type="text" placeholder="derived_histogram" /></label>
+              <button id="createDerivedButton" class="ghost-button" type="button">Create derived histogram</button>
               <div id="legendEditor" class="legend-editor"></div>
             </div>
           </details>
@@ -377,10 +420,24 @@
                 <input id="analysisXMaxInput" type="number" step="any" placeholder="auto" />
               </label>
             </div>
+            <label class="checkbox-label">
+              <input id="showAnalysisRangeInput" type="checkbox" />
+              <span>Show range on plot</span>
+            </label>
           </details>
           <details open>
             <summary>Results</summary>
             <div id="analysisResults" class="analysis-results">Select a 1D object</div>
+          </details>
+          <details open>
+            <summary>Peak finding</summary>
+            <div class="settings-row peak-controls">
+              <label>
+                <span>Sensitivity <output id="peakSensitivityValue">0.50</output></span>
+                <input id="peakSensitivityInput" type="range" min="0" max="1" step="0.05" value="0.5" />
+              </label>
+            </div>
+            <div id="peakResults" class="peak-results">Move the sensitivity slider to find peaks</div>
           </details>
           <details open>
             <summary>Warnings</summary>
@@ -421,6 +478,7 @@
             <div id="selectionOverlay" class="selection-overlay" hidden>
               <div id="selectionBox" class="selection-box"></div>
             </div>
+            <div id="peakOverlay" class="peak-overlay" aria-hidden="true"></div>
           </div>
           <div id="summaryLine" class="summary-line"></div>
         </div>

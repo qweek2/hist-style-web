@@ -64,13 +64,15 @@ class FakeRootObject:
 def test_canvas_drawables_recurses_into_supported_primitives():
     hist = FakeRootObject("TH1D", {"fName": "h1"})
     nested = FakeRootObject("TPad", {"fPrimitives": [hist]})
-    canvas = FakeRootObject("TCanvas", {"fPrimitives": [nested, FakeRootObject("TLatex")]})
+    text = FakeRootObject("TLatex", {"fText": "#Delta y", "fX": 0.2, "fY": 0.8})
+    canvas = FakeRootObject("TCanvas", {"fPrimitives": [nested, text]})
 
     drawables = canvas_drawables(canvas)
 
-    assert len(drawables) == 1
+    assert len(drawables) == 2
     assert drawables[0][0] == "h1"
     assert drawables[0][1] is hist
+    assert drawables[1][1] is text
 
 
 class FakeRootFile:

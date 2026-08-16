@@ -200,6 +200,15 @@ def test_analysis_range_stats_use_displayed_th1_normalization():
 
     assert payload["rangeStats"]["integral"] == pytest.approx(1.0)
     assert payload["rangeStats"]["fraction"] == pytest.approx(1.0)
+    assert "median" in payload["rangeStats"]
+    assert "fwhm" in payload["rangeStats"]
+
+
+def test_analysis_distribution_stats_find_peak_median_and_fwhm():
+    stats = app.distribution_stats(np.array([0.5, 1.5, 2.5, 3.5]), np.array([1.0, 4.0, 4.0, 1.0]))
+    assert stats["peak"] == pytest.approx(1.5)
+    assert stats["median"] == pytest.approx(1.5)
+    assert stats["fwhm"] == pytest.approx(1.0)
 
 
 def test_analysis_warnings_call_out_profile_semantics():

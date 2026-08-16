@@ -15,14 +15,14 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from plotting import PlotOptions, normalize_th1, plot_kind, plot_metadata, profile2d_numpy, profile_numpy, render_compare_th1, render_histogram, render_panel
-from root_reader import canvas_drawables, get_histogram, histogram_summary, list_histograms, list_root_folders, llm_export_payload, object_info
+from root_reader import canvas_drawables, flow_value, get_histogram, histogram_summary, list_histograms, list_root_folders, llm_export_payload, object_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 STATIC_DIR = BASE_DIR / "static"
 APP_NAME = "Histogram Style Web"
-APP_VERSION = os.getenv("APP_VERSION", "0.2.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.4.5")
 PROJECT_SCHEMA = "hist-style-web.project"
 PROJECT_SCHEMA_VERSION = 2
 STYLE_SCHEMA = "hist-style-web.style"
@@ -49,7 +49,31 @@ app = FastAPI(title=APP_NAME, version=APP_VERSION)
 app.mount("/static", CacheControlledStaticFiles(directory=STATIC_DIR), name="static")
 
 FILES: dict[str, Path] = {}
+DERIVED: dict[str, dict] = {}
 PLOT_LOCK = Lock()
+
+
+class DerivedHistogram:
+    classname = "TH1D"
+
+    def __init__(self, values, edges, errors, title):
+        self._values = np.asarray(values, dtype=float)
+        self._edges = np.asarray(edges, dtype=float)
+        self._errors = np.asarray(errors, dtype=float)
+        self._title = title
+
+    def to_numpy(self):
+        return self._values, self._edges
+
+    def errors(self, flow=False):
+        return self._errors
+
+    def member(self, name):
+        if name == "fTitle":
+            return self._title
+        if name == "fEntries":
+            return float(np.sum(np.clip(self._values, 0, None)))
+        raise KeyError(name)
 
 
 @app.get("/")
@@ -161,6 +185,7 @@ def plot(
     normalization: str = Query(default="raw", pattern="^(raw|area|max|bin_width)$"),
     show_errors: bool = True,
     show_legend: bool = True,
+    show_bin_values: bool = False,
     uncertainty_band: bool = False,
     line_style: str = Query(default="solid", pattern="^(solid|dashed|dashdot|dotted)$"),
     marker_style: str = Query(default="none", pattern="^(none|circle|square|triangle|diamond)$"),
@@ -184,15 +209,19 @@ def plot(
     title_font_size: int = Query(default=13, ge=6, le=40),
     label_font_size: int = Query(default=11, ge=6, le=40),
     tick_font_size: int = Query(default=10, ge=6, le=40),
+    text_font_size: float | None = Query(default=None, ge=3, le=20),
     x_min: float | None = None,
     x_max: float | None = None,
     y_min: float | None = None,
     y_max: float | None = None,
     z_min: float | None = None,
     z_max: float | None = None,
+    analysis_x_min: float | None = None,
+    analysis_x_max: float | None = None,
     image_format: str = Query(default="png", pattern="^(png|pdf|svg)$"),
 ):
-    root_path = file_path(file_id)
+    derived = derived_object(path)
+    root_path = None if derived is not None else file_path(file_id)
     options = PlotOptions(
         dpi=dpi,
         aspect_ratio=parse_aspect_ratio(aspect_ratio),
@@ -203,6 +232,7 @@ def plot(
         normalization=normalization,
         show_errors=show_errors,
         show_legend=show_legend,
+        show_bin_values=show_bin_values,
         uncertainty_band=uncertainty_band,
         line_style=line_style,
         marker_style=marker_style,
@@ -212,7 +242,7 @@ def plot(
         fit_x_min=fit_x_min,
         fit_x_max=fit_x_max,
         include_summary=include_summary,
-        summary_text=summary_line(root_path, path) if include_summary else None,
+        summary_text=summary_line(root_path, path) if include_summary and root_path is not None else None,
         font_family=font_family,
         figure_facecolor=figure_facecolor,
         axes_facecolor=axes_facecolor,
@@ -227,15 +257,18 @@ def plot(
         title_font_size=title_font_size,
         label_font_size=label_font_size,
         tick_font_size=tick_font_size,
+        text_font_size=text_font_size,
         x_min=x_min,
         x_max=x_max,
         y_min=y_min,
         y_max=y_max,
         z_min=z_min,
         z_max=z_max,
+        analysis_x_min=analysis_x_min,
+        analysis_x_max=analysis_x_max,
     )
     try:
-        hist = get_histogram(root_path, path)
+        hist = derived or get_histogram(root_path, path)
         validate_plot_request(hist, options)
         with PLOT_LOCK:
             image = render_histogram(hist, options, image_format)
@@ -247,8 +280,12 @@ def plot(
 
 @app.get("/api/files/{file_id}/summary")
 def summary(file_id: str, path: str):
-    root_path = file_path(file_id)
     try:
+        derived = derived_object(path)
+        if derived is not None:
+            centers = 0.5 * (derived._edges[:-1] + derived._edges[1:])
+            return {"kind": "TH1", "entries": float(np.sum(np.clip(derived._values, 0, None))), "integral": float(np.sum(derived._values)), "mean": weighted_mean(centers, derived._values), "rms": weighted_rms(centers, derived._values, weighted_mean(centers, derived._values))}
+        root_path = file_path(file_id)
         return histogram_summary(root_path, path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -256,12 +293,13 @@ def summary(file_id: str, path: str):
 
 @app.post("/api/files/{file_id}/plot-metadata")
 def metadata(file_id: str, payload: dict):
-    root_path = file_path(file_id)
     hist_path = payload.get("path")
     if not hist_path:
         raise HTTPException(status_code=400, detail="Object path is required")
     try:
-        obj = get_histogram(root_path, hist_path)
+        derived = derived_object(hist_path)
+        root_path = None if derived is not None else file_path(file_id)
+        obj = derived or get_histogram(root_path, hist_path)
         options = options_from_settings(payload.get("settings", {}))
         validate_plot_request(obj, options)
         with PLOT_LOCK:
@@ -272,8 +310,11 @@ def metadata(file_id: str, payload: dict):
 
 @app.get("/api/files/{file_id}/info")
 def info(file_id: str, path: str):
-    root_path = file_path(file_id)
     try:
+        derived = derived_object(path)
+        if derived is not None:
+            return {"path": path, "className": "TH1D", "kind": "TH1", "title": derived._title, "binsX": len(derived._values), "xMin": float(derived._edges[0]), "xMax": float(derived._edges[-1]), "xTitle": "", "yTitle": "Entries", "entries": float(np.sum(np.clip(derived._values, 0, None)))}
+        root_path = file_path(file_id)
         return object_info(root_path, path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -281,19 +322,21 @@ def info(file_id: str, path: str):
 
 @app.post("/api/files/{file_id}/analysis")
 def analysis(file_id: str, payload: dict):
-    root_path = file_path(file_id)
     hist_path = payload.get("path")
     if not hist_path:
         raise HTTPException(status_code=400, detail="Object path is required")
 
     try:
-        obj = get_histogram(root_path, hist_path)
+        derived = derived_object(hist_path)
+        root_path = None if derived is not None else file_path(file_id)
+        obj = derived or get_histogram(root_path, hist_path)
         options = options_from_settings(payload.get("settings", {}))
         x_min = optional_float(payload.get("xMin"))
         x_max = optional_float(payload.get("xMax"))
+        peak_sensitivity = optional_float(payload.get("peakSensitivity"), 0.5)
         if x_min is not None and x_max is not None and x_min >= x_max:
             raise ValueError("Analysis X min must be smaller than Analysis X max")
-        return analysis_payload(obj, options, x_min, x_max)
+        return analysis_payload(obj, options, x_min, x_max, peak_sensitivity)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -332,6 +375,113 @@ def export_all(file_id: str, payload: dict):
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="histograms.zip"'},
     )
+
+
+@app.post("/api/files/{file_id}/export-selected")
+def export_selected(file_id: str, payload: dict):
+    file_path(file_id)
+    image_format = payload.get("format", "png")
+    if image_format not in {"png", "pdf", "svg"}:
+        raise HTTPException(status_code=400, detail="Format must be png, pdf, or svg")
+    refs = object_references(file_id, payload)
+    if not refs:
+        raise HTTPException(status_code=400, detail="Select at least one object")
+    global_settings = payload.get("globalSettings", {})
+    hist_settings = payload.get("histSettings", {})
+    buffer = BytesIO()
+    manifest_objects = []
+    try:
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for reference in refs:
+                source_path = file_path(reference["fileId"])
+                path = reference["path"]
+                key = f"{source_path.name}::{path}"
+                settings = {**global_settings, **hist_settings.get(key, {}), **hist_settings.get(path, {})}
+                options = options_from_settings(settings)
+                hist = get_histogram(source_path, path)
+                if options.include_summary:
+                    options.summary_text = summary_line(source_path, path)
+                with PLOT_LOCK:
+                    image = render_histogram(hist, options, image_format)
+                output_name = safe_name(f"{source_path.stem}_{path}") + f".{image_format}"
+                archive.writestr(output_name, image)
+                manifest_objects.append({"file": source_path.name, "path": path, "output": output_name, "kind": plot_kind(hist)})
+            archive.writestr("manifest.json", json.dumps({"schema": EXPORT_MANIFEST_SCHEMA, "schemaVersion": EXPORT_MANIFEST_SCHEMA_VERSION, "app": app_metadata(), "format": image_format, "objectCount": len(manifest_objects), "objects": manifest_objects}, indent=2, ensure_ascii=False))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/files/{file_id}/derive")
+def derive_histogram(file_id: str, payload: dict):
+    operation = str(payload.get("operation") or "subtract")
+    first_path = payload.get("aPath")
+    second_path = payload.get("bPath")
+    if not first_path:
+        raise HTTPException(status_code=400, detail="Input histogram A is required")
+    if operation in {"add", "subtract", "ratio"} and not second_path:
+        raise HTTPException(status_code=400, detail="Input histogram B is required")
+    try:
+        values_a, edges_a, errors_a = numeric_th1(file_path(file_id), first_path)
+        values_b = errors_b = None
+        if second_path:
+            values_b, edges_b, errors_b = numeric_th1(file_path(payload.get("bFileId") or file_id), second_path)
+            if len(edges_a) != len(edges_b) or not np.allclose(edges_a, edges_b):
+                raise ValueError("Derived operation requires identical binning")
+        coefficient = float(payload.get("coefficient", 1.0))
+        if operation == "add":
+            values, errors = values_a + values_b, np.sqrt(errors_a**2 + errors_b**2)
+        elif operation == "subtract":
+            values, errors = values_a - values_b, np.sqrt(errors_a**2 + errors_b**2)
+        elif operation == "ratio":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                values = np.divide(values_a, values_b, out=np.full_like(values_a, np.nan), where=values_b != 0)
+                errors = np.abs(values) * np.sqrt(
+                    np.divide(errors_a, values_a, out=np.zeros_like(values_a), where=values_a != 0) ** 2
+                    + np.divide(errors_b, values_b, out=np.zeros_like(values_b), where=values_b != 0) ** 2
+                )
+        elif operation == "scale":
+            values, errors = coefficient * values_a, abs(coefficient) * errors_a
+        elif operation == "normalize":
+            values, errors = normalize_th1(values_a, errors_a, np.diff(edges_a), "area")
+        else:
+            raise ValueError(f"Unsupported derived operation: {operation}")
+        derived_id = uuid4().hex
+        title = str(payload.get("name") or f"{operation}: {first_path}")
+        DERIVED[derived_id] = {
+            "values": np.asarray(values, dtype=float), "edges": edges_a, "errors": np.asarray(errors, dtype=float),
+            "title": title, "operation": operation, "aPath": first_path, "bPath": second_path,
+            "sourceFileId": file_id,
+        }
+        return {"derivedId": derived_id, "path": f"derived/{title}", "title": title, "kind": "TH1", "operation": operation, "sourceFileId": file_id}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/derived/{derived_id}/plot")
+def derived_plot(derived_id: str, settings: str = "", image_format: str = Query(default="png", pattern="^(png|pdf|svg)$")):
+    item = DERIVED.get(derived_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Derived histogram not found")
+    try:
+        options = options_from_settings(json.loads(settings) if settings else {})
+        with PLOT_LOCK:
+            image = render_histogram(DerivedHistogram(item["values"], item["edges"], item["errors"], item["title"]), options, image_format)
+        return Response(content=image, media_type=media_type(image_format))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def numeric_th1(root_path: Path, path: str):
+    obj = get_histogram(root_path, path)
+    if plot_kind(obj) not in {"TH1", "TProfile"}:
+        raise ValueError("Derived operations support TH1 and TProfile objects only")
+    values, edges = profile_numpy(obj) if plot_kind(obj) == "TProfile" else obj.to_numpy()
+    try:
+        errors = np.asarray(obj.errors(flow=False), dtype=float)
+    except Exception:
+        errors = np.sqrt(np.clip(np.asarray(values, dtype=float), 0, None))
+    return np.asarray(values, dtype=float), np.asarray(edges, dtype=float), errors
+    return Response(content=buffer.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="selected_histograms.zip"'})
 
 
 @app.post("/api/files/{file_id}/llm-export")
@@ -442,6 +592,15 @@ def file_path(file_id: str) -> Path:
     if not root_path or not root_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return root_path
+
+
+def derived_object(path: str):
+    if not isinstance(path, str) or not path.startswith("derived/"):
+        return None
+    item = DERIVED.get(path.split("/", 1)[1])
+    if not item:
+        raise HTTPException(status_code=404, detail="Derived histogram not found")
+    return DerivedHistogram(item["values"], item["edges"], item["errors"], item["title"])
 
 
 def object_references(default_file_id: str, payload: dict) -> list[dict]:
@@ -560,6 +719,8 @@ def options_from_settings(settings: dict) -> PlotOptions:
         normalization=settings.get("normalization") or "raw",
         show_errors=bool(settings.get("showErrors", True)),
         show_legend=bool(settings.get("showLegend", True)),
+        show_bin_values=bool(settings.get("showBinValues", False)),
+        text_font_size=optional_float(settings.get("textFontSize")),
         uncertainty_band=bool(settings.get("uncertaintyBand", False)),
         line_style=settings.get("lineStyle") or "solid",
         marker_style=settings.get("markerStyle") or "none",
@@ -590,6 +751,8 @@ def options_from_settings(settings: dict) -> PlotOptions:
         y_max=optional_float(settings.get("yMax")),
         z_min=optional_float(settings.get("zMin")),
         z_max=optional_float(settings.get("zMax")),
+        analysis_x_min=optional_float(settings.get("analysisXMin")),
+        analysis_x_max=optional_float(settings.get("analysisXMax")),
     )
 
 
@@ -696,7 +859,7 @@ def fit_required_points(model: str) -> int:
     return {"linear": 2, "quadratic": 3, "cubic": 4}.get(model, 3)
 
 
-def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: float | None) -> dict:
+def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: float | None, peak_sensitivity: float = 0.5) -> dict:
     kind = plot_kind(obj)
     warnings = analysis_warnings(obj, kind, options)
     payload = {
@@ -729,7 +892,10 @@ def analysis_payload(obj, options: PlotOptions, x_min: float | None, x_max: floa
         "fraction": selected_integral / total_integral if total_integral else 0.0,
         "mean": selected_mean,
         "rms": selected_rms,
+        **distribution_stats(selected_centers, selected_values),
     }
+    payload["distributionStats"] = distribution_stats(centers[mask], values[mask])
+    payload["peaks"] = find_peaks(selected_centers, selected_values, peak_sensitivity)
 
     if options.fit_enabled:
         payload["fit"] = fit_analysis(values, edges, options)
@@ -892,6 +1058,13 @@ def analysis_warnings(obj, kind: str, options: PlotOptions) -> list[str]:
         warnings.append("TProfile bins represent mean Y per X bin; entries and integrals are not ordinary TH1 event-count integrals")
     if kind == "TProfile2D":
         warnings.append("TProfile2D bins represent mean values per X/Y bin; color scale is not event density")
+    if kind in {"TH1", "TProfile"}:
+        underflow = flow_value(obj, "underflow")
+        overflow = flow_value(obj, "overflow")
+        if underflow not in (None, 0) or overflow not in (None, 0):
+            warnings.append(f"Object has flow-bin content: underflow={format_number(underflow or 0)}, overflow={format_number(overflow or 0)}")
+        if np.count_nonzero(values_array == 0) > max(5, values_array.size // 2):
+            warnings.append("More than half of the bins are empty; ratio-like comparisons may be unstable")
     if options.fit_enabled and options.normalization != "raw":
         warnings.append("Fit is applied to displayed normalized values, not raw bin contents")
     if options.fit_enabled and kind not in {"TH1", "TProfile"}:
@@ -921,6 +1094,43 @@ def weighted_rms(centers, weights, mean: float) -> float:
         return 0.0
     variance = np.sum(((centers - mean) ** 2) * weights) / total
     return float(np.sqrt(max(variance, 0.0)))
+
+
+def distribution_stats(centers, values) -> dict:
+    centers = np.asarray(centers, dtype=float)
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(centers) & np.isfinite(values)
+    centers = centers[finite]
+    values = np.clip(values[finite], 0, None)
+    if not len(centers) or not np.any(values > 0):
+        return {"median": 0.0, "peak": None, "peakValue": 0.0, "fwhm": None}
+    cumulative = np.cumsum(values)
+    median = float(centers[np.searchsorted(cumulative, cumulative[-1] * 0.5)])
+    peak_index = int(np.argmax(values))
+    peak_value = float(values[peak_index])
+    above = np.flatnonzero(values >= peak_value * 0.5)
+    fwhm = float(centers[above[-1]] - centers[above[0]]) if len(above) > 1 else 0.0
+    return {"median": median, "peak": float(centers[peak_index]), "peakValue": peak_value, "fwhm": fwhm}
+
+
+def find_peaks(centers, values, sensitivity: float = 0.5) -> list[dict]:
+    centers = np.asarray(centers, dtype=float)
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(centers) & np.isfinite(values)
+    centers, values = centers[finite], values[finite]
+    if len(values) < 3:
+        return []
+    sensitivity = min(max(float(sensitivity), 0.0), 1.0)
+    maximum = float(np.max(values))
+    if maximum <= 0:
+        return []
+    threshold = (1.0 - sensitivity) * maximum
+    candidates = []
+    for index in range(1, len(values) - 1):
+        if values[index] >= threshold and values[index] >= values[index - 1] and values[index] >= values[index + 1] and (values[index] > values[index - 1] or values[index] > values[index + 1]):
+            candidates.append({"x": float(centers[index]), "value": float(values[index]), "bin": int(index)})
+    candidates.sort(key=lambda item: item["value"], reverse=True)
+    return candidates[:20]
 
 
 def polynomial_order(model: str) -> int | None:

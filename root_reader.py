@@ -311,7 +311,10 @@ def walk_canvas_primitives(obj, found: list[tuple[str, object]], seen: set[int],
         return
     seen.add(id(obj))
 
-    kind = histogram_kind(getattr(obj, "classname", ""))
+    class_name = str(getattr(obj, "classname", ""))
+    kind = histogram_kind(class_name)
+    if any(token in class_name for token in ("TText", "TLatex", "TPaveText", "TPaveLabel")):
+        kind = "TText"
     if kind and kind != "TCanvas":
         found.append((object_name(obj, f"primitive_{len(found) + 1}"), obj))
         return

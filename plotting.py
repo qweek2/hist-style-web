@@ -48,6 +48,7 @@ class PlotOptions:
     title_font_size: int = 13
     label_font_size: int = 11
     tick_font_size: int = 10
+    text_font_size: float | None = None
     x_min: float | None = None
     x_max: float | None = None
     y_min: float | None = None
@@ -55,6 +56,9 @@ class PlotOptions:
     z_min: float | None = None
     z_max: float | None = None
     colorbar: bool = True
+    show_bin_values: bool = False
+    analysis_x_min: float | None = None
+    analysis_x_max: float | None = None
 
 
 def render_histogram(hist, options: PlotOptions | None = None, image_format: str = "png") -> bytes:
@@ -74,6 +78,7 @@ def render_histogram(hist, options: PlotOptions | None = None, image_format: str
         draw_object(ax, hist, options, kind)
 
         apply_ranges_and_scale(ax, options)
+        draw_analysis_annotation(ax, options)
         style_axes(ax, options)
         add_summary_to_figure(fig, options)
         safe_tight_layout(fig)
@@ -286,7 +291,8 @@ def draw_canvas_overlay(ax, canvas, primitives: list[tuple[str, object]], option
         color = colors[index % len(colors)]
         draw_canvas_overlay_primitive(ax, primitive, options, color, name)
 
-    apply_canvas_labels(ax, canvas, primitives[0][1], options)
+    first_histogram = next((primitive for _, primitive in primitives if canvas_overlay_kind(primitive) and plot_kind(primitive) != "TText"), primitives[0][1])
+    apply_canvas_labels(ax, canvas, first_histogram, options)
     if options.show_legend:
         legend = ax.legend(frameon=False, fontsize=options.tick_font_size)
         for text in legend.get_texts():
@@ -294,6 +300,9 @@ def draw_canvas_overlay(ax, canvas, primitives: list[tuple[str, object]], option
 
 
 def draw_canvas_overlay_primitive(ax, obj, options: PlotOptions, color: str, label: str) -> None:
+    if canvas_primitive_kind(obj) == "TText":
+        draw_canvas_text(ax, obj, options)
+        return
     kind = plot_kind(obj)
     if kind == "TGraph":
         x_values, y_values, x_errors, y_errors = graph_arrays(obj)
@@ -379,7 +388,64 @@ def apply_canvas_labels(ax, canvas, first_primitive, options: PlotOptions) -> No
 
 
 def canvas_overlay_kind(obj) -> bool:
-    return plot_kind(obj) in {"TH1", "TProfile", "TGraph"}
+    return canvas_primitive_kind(obj) == "TText" or plot_kind(obj) in {"TH1", "TProfile", "TGraph"}
+
+
+def draw_canvas_text(ax, obj, options: PlotOptions) -> None:
+    class_name = str(getattr(obj, "classname", ""))
+    if "TPaveText" in class_name or "TPaveLabel" in class_name:
+        text = canvas_pave_text(obj)
+        x = member_float_any(obj, ("fX1NDC", "fX1"), 0.12)
+        y = member_float_any(obj, ("fY2NDC", "fY2"), 0.88)
+        ax.text(x, y, safe_label_text(text), transform=ax.transAxes, ha="left", va="top", color=options.text_color, fontsize=options.label_font_size)
+        return
+
+    text = member_text_any(obj, ("fText", "fTitle", "fName"))
+    if not text:
+        return
+    x = member_float_any(obj, ("fX", "fX1NDC"), 0.1)
+    y = member_float_any(obj, ("fY", "fY1NDC"), 0.9)
+    use_ndc = bool(member_value(obj, "fNDC", False)) or "TLatex" in class_name
+    transform = ax.transAxes if use_ndc else ax.transData
+    ax.text(x, y, safe_label_text(text), transform=transform, color=options.text_color, fontsize=options.label_font_size, ha="left", va="center")
+
+
+def canvas_pave_text(obj) -> str:
+    lines = []
+    try:
+        for line in iter_root_collection(obj.member("fLines")):
+            text = member_text_any(line, ("fTitle", "fText", "fName"))
+            if text:
+                lines.append(text)
+    except Exception:
+        pass
+    return "\n".join(lines) or member_text_any(obj, ("fTitle", "fName"))
+
+
+def member_value(obj, name: str, fallback=None):
+    try:
+        return obj.member(name)
+    except Exception:
+        return fallback
+
+
+def member_float_any(obj, names: tuple[str, ...], fallback: float = 0.0) -> float:
+    for name in names:
+        value = member_value(obj, name, None)
+        try:
+            if value is not None:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return fallback
+
+
+def member_text_any(obj, names: tuple[str, ...]) -> str:
+    for name in names:
+        value = member_value(obj, name, "")
+        if value:
+            return str(value)
+    return ""
 
 
 def canvas_drawables(canvas, max_depth: int = 8) -> list[tuple[str, object]]:
@@ -458,6 +524,8 @@ def canvas_primitive_kind(obj) -> str | None:
         return "TH1"
     if class_name.startswith("TGraph"):
         return "TGraph"
+    if any(token in class_name for token in ("TText", "TLatex", "TPaveText", "TPaveLabel")):
+        return "TText"
     return None
 
 
@@ -617,6 +685,9 @@ def draw_th2(ax, hist, options: PlotOptions):
         cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
         style_colorbar(cbar, options, "Entries")
 
+    if options.show_bin_values:
+        annotate_bin_values(ax, values, x_edges, y_edges, options)
+
     apply_labels(ax, hist, options, default_y_label="y")
     return mesh
 
@@ -642,6 +713,8 @@ def draw_tprofile2d(ax, hist, options: PlotOptions):
     if options.colorbar:
         cbar = ax.figure.colorbar(mesh, ax=ax, pad=0.02)
         style_colorbar(cbar, options, "Profile")
+    if options.show_bin_values:
+        annotate_bin_values(ax, values, x_edges, y_edges, options)
     apply_labels(ax, hist, options, default_y_label="y")
     return mesh
 
@@ -650,6 +723,59 @@ def style_colorbar(cbar, options: PlotOptions, label: str) -> None:
     cbar.set_label(label, color=options.text_color, fontsize=options.label_font_size)
     cbar.ax.tick_params(labelsize=options.tick_font_size, colors=options.axis_color)
     cbar.outline.set_edgecolor(options.axis_color)
+
+
+def annotate_bin_values(ax, values, x_edges, y_edges, options: PlotOptions) -> None:
+    values = np.asarray(values, dtype=float)
+    x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return
+    scale = max(float(np.nanmax(np.abs(finite))), 1.0)
+    labels = {
+        (ix, iy): format_bin_value(values[ix, iy])
+        for ix in range(len(x_centers))
+        for iy in range(len(y_centers))
+        if np.isfinite(values[ix, iy]) and values[ix, iy] != 0
+    }
+    if not labels:
+        return
+
+    # Use the actual projected bin size so TEXT remains readable after zooming
+    # or changing the aspect ratio. A user-selected size is treated as a cap.
+    x_pixels = np.abs(np.diff(ax.transData.transform(np.column_stack([x_edges, np.zeros(len(x_edges))]))[:, 0]))
+    y_pixels = np.abs(np.diff(ax.transData.transform(np.column_stack([np.zeros(len(y_edges)), y_edges]))[:, 1]))
+    min_cell_pixels = max(1.0, min(float(np.min(x_pixels)), float(np.min(y_pixels))))
+    auto_size = min(
+        float(options.tick_font_size) * 0.5,
+        min_cell_pixels * 72.0 / max(float(options.dpi), 1.0) * 0.72,
+        72.0 / max(float(options.dpi), 1.0) * 12.0,
+    )
+    requested_size = float(options.text_font_size) if options.text_font_size else auto_size
+    font_size = max(3.0, min(requested_size, auto_size))
+    # A compact estimate is sufficient here and avoids renderer-dependent
+    # overlap. Dense cells are skipped rather than drawing unreadable text.
+    char_width = font_size * float(options.dpi) / 72.0 * 0.62
+    max_chars = max(1, int((min_cell_pixels * 0.86) / max(char_width, 1.0)))
+    for ix, x in enumerate(x_centers):
+        for iy, y in enumerate(y_centers):
+            value = values[ix, iy]
+            if not np.isfinite(value) or value == 0:
+                continue
+            label = labels[(ix, iy)]
+            if len(label) > max_chars or min_cell_pixels < 5:
+                continue
+            text_color = "white" if abs(value) > 0.55 * scale else options.text_color
+            ax.text(x, y, label, ha="center", va="center", color=text_color, fontsize=font_size, clip_on=True)
+
+
+def format_bin_value(value: float) -> str:
+    if abs(value) >= 1000 or (abs(value) > 0 and abs(value) < 0.01):
+        return f"{value:.2g}"
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.3g}"
 
 
 def profile2d_numpy(hist):
@@ -943,6 +1069,15 @@ def compare_residual(item: dict, reference: dict, mode: str):
             residual = 100.0 * np.divide(diff, ref_values, out=np.full_like(values, np.nan), where=ref_values != 0)
             residual_errors = 100.0 * np.sqrt(errors**2 + ref_errors**2) / np.where(ref_values != 0, np.abs(ref_values), np.nan)
             return residual, residual_errors, "% diff", 0.0
+        if mode == "symmetric_difference":
+            denominator = 0.5 * (values + ref_values)
+            residual = 100.0 * np.divide(values - ref_values, denominator, out=np.full_like(values, np.nan), where=denominator != 0)
+            residual_errors = 100.0 * np.divide(np.sqrt(errors**2 + ref_errors**2), np.abs(denominator), out=np.full_like(values, np.nan), where=denominator != 0)
+            return residual, residual_errors, "Sym. diff. [%]", 0.0
+        if mode == "pull":
+            denominator = np.sqrt(errors**2 + ref_errors**2)
+            residual = np.divide(values - ref_values, denominator, out=np.full_like(values, np.nan), where=denominator > 0)
+            return residual, np.zeros_like(residual), "Pull", 0.0
     residual = values - ref_values
     residual_errors = np.sqrt(errors**2 + ref_errors**2)
     return residual, residual_errors, "Diff", 0.0
@@ -1112,6 +1247,15 @@ def normalize_th1(values, errors, widths, normalization: str):
         safe_widths = np.where(widths > 0, widths, 1.0)
         return values / safe_widths, errors / safe_widths
     return values, errors
+
+
+def draw_analysis_annotation(ax, options: PlotOptions) -> None:
+    if options.analysis_x_min is not None:
+        ax.axvline(options.analysis_x_min, color=options.axis_color, linestyle="--", linewidth=0.9, alpha=0.75)
+    if options.analysis_x_max is not None:
+        ax.axvline(options.analysis_x_max, color=options.axis_color, linestyle="--", linewidth=0.9, alpha=0.75)
+    if options.analysis_x_min is not None and options.analysis_x_max is not None:
+        ax.axvspan(options.analysis_x_min, options.analysis_x_max, color=options.axis_color, alpha=0.06, linewidth=0)
 
 
 def draw_markers(ax, x_values, y_values, options: PlotOptions, color: str) -> None:

@@ -30,6 +30,10 @@ comparison, multi-panel figures, analysis, fitting, and export.
 - Export single plots, comparison plots, panel figures, or all objects.
 - Export selected histogram data as machine-readable JSON for LLM-assisted
   analysis.
+- Create derived histograms with add, subtract, ratio, scale, and normalize
+  operations.
+- Display 2D bin values with a ROOT-like `TEXT` overlay, equivalent to a
+  lightweight `Draw("COLZ TEXT")` view.
 - Save and reload reproducible project JSON files.
 
 ## Quick Start
@@ -125,14 +129,19 @@ Common examples:
 - `TProfile`
 - `TProfile2D`
 - `TGraph`, `TGraphErrors`, `TGraphAsymmErrors`
-- `TCanvas` files that contain supported histogram, profile, graph, or pad
-  primitives
+- `TCanvas` files that contain supported histogram, profile, graph, pad, or
+  text primitives
 
 Not yet supported:
 
 - `THStack`
 - `TEfficiency`
-- exact restoration of saved ROOT canvas styling and annotations
+- exact restoration of every ROOT canvas style setting
+
+`TText`, `TLatex`, `TPaveText`, and `TPaveLabel` text primitives inside a
+`TCanvas` are rendered as labels over the supported drawable objects. Complex
+ROOT canvas features such as `THStack`, `TLegend`, and arbitrary custom
+primitives still require dedicated support.
 
 ## Rendering and Styling
 
@@ -237,6 +246,15 @@ It currently reports:
 - fit parameters when fitting is enabled
 - chi2/ndf
 - residual and pull summaries
+- displayed-value median, peak position/height, and approximate FWHM
+- optional visual marking of the selected analysis range on the plot
+
+The Peak finding section has a sensitivity slider. Moving it re-runs the peak
+search immediately and updates the detected peak list.
+
+Derived histograms are kept in the current workspace and can be rendered,
+analysed, compared, and exported like regular 1D objects. Their operation and
+source paths are retained by the backend while the workspace is open.
 
 You can type `Analysis X min` and `Analysis X max` manually, or select a range
 directly on the plot by dragging across the histogram while the `Analysis` tab
@@ -339,6 +357,13 @@ Supported export paths:
 manifest records the app version, manifest schema version, source ROOT metadata,
 output filenames, object paths, object kinds, global settings, and per-object
 settings used for each exported figure.
+
+`Export selected` creates a ZIP for checked objects only. `Apply preset to
+selected` applies the active style preset to all checked objects.
+
+Compare also includes symmetric difference and pull modes. Symmetric difference
+is useful when the reference curve approaches zero; pull uses the combined bin
+uncertainty.
 
 Supported formats:
 

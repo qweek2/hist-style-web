@@ -30,7 +30,7 @@ body {
 
 .sidebar {
   display: grid;
-  grid-template-rows: auto auto auto auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto auto auto auto 1fr;
   min-height: 0;
   border-right: 1px solid #d9e0ea;
   background: #ffffff;
@@ -102,9 +102,40 @@ body {
   margin-bottom: 6px;
 }
 
+.hist-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.hist-filters select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
 .compare-button {
   width: 100%;
-  margin-bottom: 6px;
+  min-width: 0;
+  margin: 0;
+  height: 30px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+.selection-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.selection-action-empty {
+  min-height: 30px;
 }
 
 .hist-list {
@@ -682,6 +713,21 @@ body {
   inset: 0;
   pointer-events: auto;
   cursor: crosshair;
+}
+
+.peak-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.peak-marker {
+  position: absolute;
+  top: 8%;
+  bottom: 12%;
+  width: 1px;
+  background: #dc2626;
+  opacity: 0.75;
 }
 
 .selection-overlay[hidden] {

@@ -4,13 +4,19 @@ const openRootPathButton = document.querySelector("#openRootPathButton");
 const dropZone = document.querySelector("#dropZone");
 const statusBox = document.querySelector("#status");
 const searchInput = document.querySelector("#searchInput");
+const fileFilterInput = document.querySelector("#fileFilterInput");
+const kindFilterInput = document.querySelector("#kindFilterInput");
+const folderFilterInput = document.querySelector("#folderFilterInput");
 const compareButton = document.querySelector("#compareButton");
 const previewPanelButton = document.querySelector("#previewPanelButton");
 const panelButton = document.querySelector("#panelButton");
+const applySelectedStyleButton = document.querySelector("#applySelectedStyleButton");
+const exportSelectedButton = document.querySelector("#exportSelectedButton");
 const histList = document.querySelector("#histList");
 const plotImage = document.querySelector("#plotImage");
 const selectionOverlay = document.querySelector("#selectionOverlay");
 const selectionBox = document.querySelector("#selectionBox");
+const peakOverlay = document.querySelector("#peakOverlay");
 const summaryLine = document.querySelector("#summaryLine");
 const selectedName = document.querySelector("#selectedName");
 const downloadLink = document.querySelector("#downloadLink");
@@ -33,10 +39,18 @@ const lineStyleInput = document.querySelector("#lineStyleInput");
 const markerStyleInput = document.querySelector("#markerStyleInput");
 const lineAlphaInput = document.querySelector("#lineAlphaInput");
 const colormapInput = document.querySelector("#colormapInput");
+const showBinValuesInput = document.querySelector("#showBinValuesInput");
+const textFontSizeInput = document.querySelector("#textFontSizeInput");
 const normalizationInput = document.querySelector("#normalizationInput");
 const showErrorsInput = document.querySelector("#showErrorsInput");
 const showLegendInput = document.querySelector("#showLegendInput");
 const uncertaintyBandInput = document.querySelector("#uncertaintyBandInput");
+const derivedOperationInput = document.querySelector("#derivedOperationInput");
+const derivedAInput = document.querySelector("#derivedAInput");
+const derivedBInput = document.querySelector("#derivedBInput");
+const derivedCoefficientInput = document.querySelector("#derivedCoefficientInput");
+const derivedNameInput = document.querySelector("#derivedNameInput");
+const createDerivedButton = document.querySelector("#createDerivedButton");
 const compareModeInput = document.querySelector("#compareModeInput");
 const fitEnabledInput = document.querySelector("#fitEnabledInput");
 const fitModelInput = document.querySelector("#fitModelInput");
@@ -72,7 +86,11 @@ const copyDiagnosticsButton = document.querySelector("#copyDiagnosticsButton");
 const diagnosticsOutput = document.querySelector("#diagnosticsOutput");
 const analysisXMinInput = document.querySelector("#analysisXMinInput");
 const analysisXMaxInput = document.querySelector("#analysisXMaxInput");
+const showAnalysisRangeInput = document.querySelector("#showAnalysisRangeInput");
 const analysisResults = document.querySelector("#analysisResults");
+const peakSensitivityInput = document.querySelector("#peakSensitivityInput");
+const peakSensitivityValue = document.querySelector("#peakSensitivityValue");
+const peakResults = document.querySelector("#peakResults");
 const analysisWarnings = document.querySelector("#analysisWarnings");
 const scaleControls = document.querySelectorAll(".segmented[data-scale]");
 
@@ -132,6 +150,8 @@ const globalSettings = {
   markerStyle: "none",
   lineAlpha: "1",
   colormap: "white-blue",
+  showBinValues: false,
+  textFontSize: "auto",
   normalization: "raw",
   showErrors: true,
   showLegend: true,
@@ -161,6 +181,9 @@ const globalSettings = {
   textColor: "#111827",
   axisColor: "#111827",
   tickDirection: "out",
+  analysisXMin: "",
+  analysisXMax: "",
+  showAnalysisRange: false,
 };
 const histSettings = new Map();
 const DEFAULT_SETTINGS = { ...globalSettings };

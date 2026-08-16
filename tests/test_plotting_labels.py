@@ -1,8 +1,9 @@
 import numpy as np
+import pytest
 
 from matplotlib.figure import Figure
 
-from plotting import PlotOptions, ascii_safe_text, panel_z_limits, plain_root_text, render_panel, safe_label_text, validate_mathtext_label
+from plotting import PlotOptions, ascii_safe_text, compare_residual, panel_z_limits, plain_root_text, render_panel, safe_label_text, validate_mathtext_label
 
 
 def test_safe_label_text_converts_root_labels_to_valid_mathtext():
@@ -27,6 +28,18 @@ def test_plain_root_text_removes_math_wrappers_and_backslashes():
 
 def test_ascii_safe_text_keeps_export_fallback_ascii_only():
     assert ascii_safe_text("#Delta y") == "Delta y"
+
+
+def test_compare_residual_supports_symmetric_difference_and_pull():
+    reference = {"values": np.array([2.0, 0.0]), "errors": np.array([1.0, 1.0])}
+    item = {"values": np.array([3.0, 1.0]), "errors": np.array([1.0, 1.0])}
+    symmetric, _, label, baseline = compare_residual(item, reference, "symmetric_difference")
+    assert symmetric[0] == 40.0
+    assert label == "Sym. diff. [%]"
+    assert baseline == 0.0
+    pull, _, label, _ = compare_residual(item, reference, "pull")
+    assert pull[0] == pytest.approx(np.sqrt(0.5))
+    assert label == "Pull"
 
 
 class FakeTH2:

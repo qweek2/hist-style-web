@@ -16,6 +16,15 @@ function setDownloadBlob(blob, filename) {
   downloadLink.classList.remove("disabled");
 }
 
+function setDownloadUrl(url, filename) {
+  if (downloadLink.href.startsWith("blob:")) {
+    URL.revokeObjectURL(downloadLink.href);
+  }
+  downloadLink.href = url;
+  downloadLink.download = filename;
+  downloadLink.classList.remove("disabled");
+}
+
 function showStatus(message) {
   statusBox.textContent = message;
 }
@@ -75,6 +84,8 @@ function formSettings() {
     markerStyle: markerStyleInput.value,
     lineAlpha: lineAlphaInput.value,
     colormap: colormapInput.value,
+    showBinValues: showBinValuesInput.checked,
+    textFontSize: textFontSizeInput.value || "auto",
     normalization: normalizationInput.value,
     showErrors: showErrorsInput.checked,
     showLegend: showLegendInput.checked,
@@ -96,6 +107,9 @@ function formSettings() {
     yMax: yMaxInput.value,
     zMin: zMinInput.value,
     zMax: zMaxInput.value,
+    analysisXMin: analysisXMinInput.value,
+    analysisXMax: analysisXMaxInput.value,
+    showAnalysisRange: showAnalysisRangeInput.checked,
     showSummary: showSummaryInput.checked,
     includeSummary: includeSummaryInput.checked,
   };
@@ -123,6 +137,38 @@ async function exportAll() {
   } finally {
     exportAllButton.disabled = false;
     exportAllButton.textContent = "Export all";
+  }
+}
+
+function applyPresetToSelected() {
+  const preset = PRESETS[stylePresetInput.value] || PRESETS.journal;
+  const selected = Array.from(comparePaths)
+    .map((ref) => allHistograms.find((hist) => hist.ref === ref))
+    .filter(Boolean);
+  selected.forEach((hist) => histSettings.set(objectStableKey(hist), { ...globalSettings, ...preset }));
+  showStatus(`Applied ${stylePresetInput.value} preset to ${selected.length} objects`);
+  if (currentHist && selected.some((hist) => hist.ref === currentHist.ref)) loadSettingsToForm();
+  refreshPlotSoon();
+}
+
+async function exportSelected() {
+  const objects = Array.from(comparePaths)
+    .map((ref) => allHistograms.find((hist) => hist.ref === ref))
+    .filter(Boolean)
+    .map((hist) => ({ fileId: hist.fileId, path: hist.path, label: `${hist.rootFileName}: ${hist.path}` }));
+  if (!objects.length) return;
+  exportSelectedButton.disabled = true;
+  try {
+    const payload = { format: formatInput.value, objects, ...stylePayload(formatInput.value) };
+    const response = await fetch(`/api/files/${currentFileId}/export-selected`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw await errorFromResponse(response, { endpoint: `/api/files/${currentFileId}/export-selected`, payload });
+    downloadBlob(await response.blob(), `selected_histograms_${formatInput.value}.zip`);
+  } catch (error) {
+    showError("Export selected", error);
+  } finally {
+    updateCompareButton();
   }
 }
 

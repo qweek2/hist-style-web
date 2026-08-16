@@ -100,7 +100,67 @@ function setLoadedRootFile(data, rootFileName, rootFilePath = "", append = false
   analysisResults.textContent = "Select a 1D object";
   analysisWarnings.innerHTML = "<li>No object selected</li>";
   showStatus(`${allHistograms.length} objects from ${loadedFiles.size} ROOT file${loadedFiles.size === 1 ? "" : "s"}`);
+  refreshHistogramFilters();
   renderHistogramList(filteredHistograms());
+}
+
+function refreshHistogramFilters() {
+  const selected = { file: fileFilterInput.value, kind: kindFilterInput.value, folder: folderFilterInput.value };
+  const setOptions = (select, values, allLabel) => {
+    select.innerHTML = `<option value="">${allLabel}</option>`;
+    values.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    });
+  };
+  setOptions(fileFilterInput, Array.from(new Set(allHistograms.map((hist) => hist.rootFileName))).sort(), "All files");
+  setOptions(kindFilterInput, Array.from(new Set(allHistograms.map((hist) => hist.kind))).sort(), "All types");
+  setOptions(folderFilterInput, Array.from(new Set(allHistograms.map((hist) => hist.path.includes("/") ? hist.path.slice(0, hist.path.lastIndexOf("/")) : "(root)").filter(Boolean))).sort(), "All folders");
+  fileFilterInput.value = selected.file;
+  kindFilterInput.value = selected.kind;
+  folderFilterInput.value = selected.folder;
+  refreshDerivedInputs();
+}
+
+function refreshDerivedInputs() {
+  const objects = allHistograms.filter((hist) => hist.kind === "TH1" || hist.kind === "TProfile");
+  const fill = (select) => {
+    const old = select.value;
+    select.innerHTML = "";
+    objects.forEach((hist) => {
+      const option = document.createElement("option");
+      option.value = hist.ref;
+      option.textContent = `${hist.rootFileName}: ${hist.path}`;
+      select.appendChild(option);
+    });
+    if (objects.some((hist) => hist.ref === old)) select.value = old;
+  };
+  fill(derivedAInput);
+  fill(derivedBInput);
+  derivedBInput.disabled = derivedOperationInput.value === "scale" || derivedOperationInput.value === "normalize";
+}
+
+async function createDerivedHistogram() {
+  const a = allHistograms.find((hist) => hist.ref === derivedAInput.value);
+  const b = allHistograms.find((hist) => hist.ref === derivedBInput.value);
+  if (!a) return;
+  const payload = { operation: derivedOperationInput.value, aPath: a.path, bPath: b?.path || "", bFileId: b?.fileId || "", coefficient: derivedCoefficientInput.value, name: derivedNameInput.value.trim() };
+  try {
+    const response = await fetch(`/api/files/${a.fileId}/derive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!response.ok) throw await errorFromResponse(response, { endpoint: `/api/files/${a.fileId}/derive`, payload });
+    const data = await response.json();
+    const hist = { path: data.path, className: "TH1D", kind: "TH1", title: data.title, rootFileName: "Derived", fileId: a.fileId, ref: `${a.fileId}::${data.path}`, derivedId: data.derivedId };
+    allHistograms = [...allHistograms, hist];
+    refreshHistogramFilters();
+    renderHistogramList(filteredHistograms());
+    showStatus(`Created ${data.title}`);
+    const button = Array.from(document.querySelectorAll(".hist-item")).find((item) => item.dataset.path === hist.ref);
+    selectHistogram(hist, button || document.createElement("button"));
+  } catch (error) {
+    showError("Create derived histogram", error, { payload });
+  }
 }
 
 function renderHistogramList(histograms) {
@@ -266,9 +326,13 @@ function selectHistogramByPath(path, render = true) {
 
 function filteredHistograms() {
   const query = searchInput.value.trim().toLowerCase();
-  if (!query) return allHistograms;
   return allHistograms.filter((hist) => {
-    return hist.path.toLowerCase().includes(query) || hist.className.toLowerCase().includes(query);
+    const folder = hist.path.includes("/") ? hist.path.slice(0, hist.path.lastIndexOf("/")) : "(root)";
+    const matchesQuery = !query || hist.path.toLowerCase().includes(query) || hist.className.toLowerCase().includes(query) || hist.rootFileName.toLowerCase().includes(query);
+    return matchesQuery
+      && (!fileFilterInput.value || hist.rootFileName === fileFilterInput.value)
+      && (!kindFilterInput.value || hist.kind === kindFilterInput.value)
+      && (!folderFilterInput.value || folder === folderFilterInput.value);
   });
 }
 
@@ -290,6 +354,8 @@ function updateCompareButton() {
   panelButton.textContent = `Export panel (${comparePaths.size})`;
   previewPanelButton.disabled = comparePaths.size < 1;
   previewPanelButton.textContent = `Preview panel (${comparePaths.size})`;
+  applySelectedStyleButton.disabled = comparePaths.size < 1;
+  exportSelectedButton.disabled = comparePaths.size < 1;
 }
 
 function selectedComparePaths() {

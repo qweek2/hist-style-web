@@ -58,13 +58,9 @@ async function refreshPlot() {
     const blob = await fetchPlotImage(currentHist, "png");
     if (!isCurrentRenderRequest(requestId, renderPath)) return;
     setPlotBlob(blob);
-    if (imageFormat === "png") {
-      setDownloadBlob(blob, `${safeName(renderPath)}.png`);
-    } else {
-      const downloadBlob = await fetchPlotImage(currentHist, imageFormat);
-      if (!isCurrentRenderRequest(requestId, renderPath)) return;
-      setDownloadBlob(downloadBlob, `${safeName(renderPath)}.${imageFormat}`);
-    }
+    // The preview is always PNG. Keep the selected export format on the
+    // download URL itself so PDF/SVG cannot be replaced by a stale PNG blob.
+    setDownloadUrl(plotUrl(currentHist, imageFormat), `${safeName(renderPath)}.${imageFormat}`);
     renderInFlight = false;
     renderCompleted = true;
     refreshPostRenderData();
@@ -176,6 +172,7 @@ async function refreshAnalysis() {
     settings: formSettings(),
     xMin: analysisXMinInput.value,
     xMax: analysisXMaxInput.value,
+    peakSensitivity: peakSensitivityInput.value,
   };
 
   try {
@@ -244,10 +241,12 @@ function renderAnalysis(analysis) {
   } else {
     analysisResults.innerHTML = [
       analysisSection("Interpretation", interpretationRows(analysis.metadata)),
-      analysisSection("Range", rangeRows(analysis.rangeStats)),
+      analysisSection("Range", rangeRows(analysis.rangeStats, analysis.distributionStats)),
       analysisSection("Fit", fitRows(analysis.fit)),
     ].join("");
   }
+
+  renderPeaks(analysis.peaks || []);
 
   const warnings = analysis.warnings || [];
   analysisWarnings.innerHTML = warnings.length
@@ -281,15 +280,43 @@ function interpretationRows(metadata) {
   return rows;
 }
 
-function rangeRows(stats) {
+function rangeRows(stats, distribution = {}) {
   if (!stats) return [["Status", "No range statistics"]];
+  const merged = { ...distribution, ...stats };
   return [
-    ["Bins", stats.bins],
-    ["Integral", formatNumber(stats.integral)],
-    ["Fraction", `${formatNumber(100 * stats.fraction)}%`],
-    ["Mean", formatNumber(stats.mean)],
-    ["RMS", formatNumber(stats.rms)],
+    ["Bins", merged.bins],
+    ["Integral", formatNumber(merged.integral)],
+    ["Fraction", `${formatNumber(100 * merged.fraction)}%`],
+    ["Mean", formatNumber(merged.mean)],
+    ["RMS", formatNumber(merged.rms)],
+    ["Median", formatNumber(merged.median)],
+    ["Peak", merged.peak == null ? "n/a" : `${formatNumber(merged.peak)} (${formatNumber(merged.peakValue)})`],
+    ["FWHM", merged.fwhm == null ? "n/a" : formatNumber(merged.fwhm)],
   ];
+}
+
+function renderPeaks(peaks) {
+  peakSensitivityValue.value = Number(peakSensitivityInput.value).toFixed(2);
+  if (!peaks.length) {
+    peakResults.textContent = "No peaks found at this sensitivity";
+    peakOverlay.innerHTML = "";
+    return;
+  }
+  peakResults.innerHTML = `<table><tr><th>#</th><th>X</th><th>Height</th></tr>${peaks.map((peak, index) => `<tr><td>${index + 1}</td><td>${formatNumber(peak.x)}</td><td>${formatNumber(peak.value)}</td></tr>`).join("")}</table>`;
+  peakOverlay.innerHTML = "";
+  const xMin = currentPlotMetadata?.xMin;
+  const xMax = currentPlotMetadata?.xMax;
+  const box = currentPlotMetadata?.axesBox;
+  if (!Number.isFinite(xMin) || !Number.isFinite(xMax) || !box || xMax <= xMin) return;
+  peaks.forEach((peak) => {
+    const relative = (peak.x - xMin) / (xMax - xMin);
+    if (relative < 0 || relative > 1) return;
+    const marker = document.createElement("div");
+    marker.className = "peak-marker";
+    marker.style.left = `${100 * (box.left + relative * box.width)}%`;
+    marker.title = `Peak x=${formatNumber(peak.x)}, height=${formatNumber(peak.value)}`;
+    peakOverlay.appendChild(marker);
+  });
 }
 
 function fitRows(fit) {
@@ -482,6 +509,9 @@ function escapeHtml(value) {
 
 function plotUrl(hist, imageFormat = "png") {
   const settings = effectiveSettings(hist);
+  if (hist.derivedId) {
+    return `/api/derived/${encodeURIComponent(hist.derivedId)}/plot?image_format=${encodeURIComponent(imageFormat)}&settings=${encodeURIComponent(JSON.stringify(settings))}`;
+  }
   const params = new URLSearchParams();
   params.set("path", hist.path);
   params.set("dpi", integerSetting(settings.dpi, "200"));
@@ -495,6 +525,10 @@ function plotUrl(hist, imageFormat = "png") {
   params.set("marker_style", settings.markerStyle);
   params.set("line_alpha", numberSetting(settings.lineAlpha, "1"));
   params.set("colormap", settings.colormap);
+  params.set("show_bin_values", settings.showBinValues ? "true" : "false");
+  if (settings.textFontSize && settings.textFontSize !== "auto") {
+    params.set("text_font_size", numberSetting(settings.textFontSize, "5"));
+  }
   params.set("normalization", settings.normalization);
   params.set("show_errors", settings.showErrors ? "true" : "false");
   params.set("show_legend", settings.showLegend ? "true" : "false");
@@ -522,6 +556,10 @@ function plotUrl(hist, imageFormat = "png") {
   addNumberParam(params, "y_max", settings.yMax);
   addNumberParam(params, "z_min", settings.zMin);
   addNumberParam(params, "z_max", settings.zMax);
+  if (settings.showAnalysisRange) {
+    addNumberParam(params, "analysis_x_min", settings.analysisXMin);
+    addNumberParam(params, "analysis_x_max", settings.analysisXMax);
+  }
   params.set("image_format", imageFormat);
   return `/api/files/${activeFileId()}/plot?${params.toString()}`;
 }
@@ -589,6 +627,8 @@ function saveSettingsFromForm() {
   target.markerStyle = markerStyleInput.value;
   target.lineAlpha = lineAlphaInput.value;
   target.colormap = colormapInput.value;
+  target.showBinValues = showBinValuesInput.checked;
+  target.textFontSize = textFontSizeInput.value || "auto";
   target.normalization = normalizationInput.value;
   target.showErrors = showErrorsInput.checked;
   target.showLegend = showLegendInput.checked;
@@ -610,6 +650,9 @@ function saveSettingsFromForm() {
   target.yMax = yMaxInput.value;
   target.zMin = zMinInput.value;
   target.zMax = zMaxInput.value;
+  target.analysisXMin = analysisXMinInput.value;
+  target.analysisXMax = analysisXMaxInput.value;
+  target.showAnalysisRange = showAnalysisRangeInput.checked;
   target.showSummary = showSummaryInput.checked;
   target.includeSummary = includeSummaryInput.checked;
 }
@@ -628,6 +671,8 @@ function loadSettingsToForm() {
   markerStyleInput.value = settings.markerStyle || "none";
   lineAlphaInput.value = settings.lineAlpha || "1";
   colormapInput.value = settings.colormap;
+  showBinValuesInput.checked = Boolean(settings.showBinValues);
+  textFontSizeInput.value = settings.textFontSize || "auto";
   normalizationInput.value = settings.normalization;
   showErrorsInput.checked = settings.showErrors;
   showLegendInput.checked = settings.showLegend;
@@ -649,6 +694,9 @@ function loadSettingsToForm() {
   yMaxInput.value = settings.yMax;
   zMinInput.value = settings.zMin;
   zMaxInput.value = settings.zMax;
+  analysisXMinInput.value = settings.analysisXMin || "";
+  analysisXMaxInput.value = settings.analysisXMax || "";
+  showAnalysisRangeInput.checked = Boolean(settings.showAnalysisRange);
   showSummaryInput.checked = settings.showSummary;
   includeSummaryInput.checked = settings.includeSummary;
 }
